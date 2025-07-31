@@ -1,0 +1,32 @@
+name: Process new TCX
+
+on:
+  push:
+    paths:
+      - 'data/**/*.tcx'
+  workflow_dispatch:
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run ingestion + analysis (placeholder)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MAX_POWER: 250
+          STABLE_WINDOW_S: 30
+          STABLE_STD_THRESHOLD: 5
+          MIN_STABLE_DURATION_S: 60
+        run: |
+          echo "À remplacer par l'appel de ton script de traitement"
