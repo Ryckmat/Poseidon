@@ -1,10 +1,9 @@
-Absolutely. Here’s a **comprehensive README.md in English** for **Poseidon**, ready to drop into your repository. It covers architecture, setup, data model, CI, dashboard, extension ideas, and contributor guidance.
-
-```markdown
 # Poseidon — Performance Analytics Platform for TCX / Power / Cadence Data
 
 Poseidon is a self-hosted, extensible performance analytics pipeline and dashboard for endurance session files (TCX/GPX/FIT).  
 It ingests raw activity files, cleans and filters noisy/outlier data (e.g., power > 250W), detects stable effort segments, computes derived metrics, performs correlation analysis (power vs cadence/speed), and tracks longitudinal progress over time.
+
+
 
 ## 🚀 Goals
 
@@ -24,12 +23,11 @@ It ingests raw activity files, cleans and filters noisy/outlier data (e.g., powe
 - **CI / Orchestration**: GitHub Actions to trigger processing on new uploads  
 - **Session Dashboard**: Streamlit (or similar) for interactive per-session visualization  
 - **Longitudinal Dashboard**: Optional Grafana / Metabase for aggregation, or integrated into Streamlit  
-- **Optional API**: FastAPI / minimal endpoint for uploads or programmatic access  
+- **Optional API**: FastAPI / minimal endpoint for uploads or programmatic access
 
 ## 📦 Repository Structure
 
 ```
-
 Poseidon/
 ├── .github/
 │   └── workflows/
