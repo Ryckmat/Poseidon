@@ -350,8 +350,3 @@ Or replace with whichever fits your needs (Apache 2.0, proprietary, etc.).
 * Record the exact filtering parameters used per session for reproducibility
 * Consider a lightweight audit log of ingest/processing runs
 * Back up the database schema and critical reference sessions regularly
-
-```
-
-Do you want a companion **template `CONTRIBUTING.md`**, or should I help you start the actual implementation next (e.g., the parser or Streamlit skeleton)?
-```
