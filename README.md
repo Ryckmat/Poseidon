@@ -309,24 +309,7 @@ streamlit run src/dashboard/app.py
 * Supabase / Neon: optional managed DB + object storage
 * (Optional) Grafana / Metabase: deeper longitudinal dashboards
 
-## 🤝 Contributing
 
-Contributions are welcome. Suggested workflow:
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/your-thing`
-3. Implement & test
-4. Commit with clear message (e.g., `feat(parser): add resilient TCX timestamp normalization`)
-5. Open a pull request against `main`
-6. Describe your change, include before/after if applicable
-
-Follow [Conventional Commits](https://www.conventionalcommits.org/) for clarity.
-
-## 🏷️ Badge Examples (add to top of README)
-
-```markdown
-![CI](https://github.com/Ryckmat/Poseidon/actions/workflows/process-tcx.yml/badge.svg)
-```
 
 ## 📚 References
 
@@ -334,16 +317,6 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/) for clarity.
 * Power analysis methodologies (Normalized Power, TSS)
 * Streamlit documentation
 * PostgreSQL performance tips (indexes on time-series)
-
-## 📜 License
-
-Specify your license here. Example:
-
-```
-MIT License
-```
-
-Or replace with whichever fits your needs (Apache 2.0, proprietary, etc.).
 
 ## 🗂️ Useful Tips
 
