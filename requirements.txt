@@ -11,3 +11,5 @@ fastapi==0.101.0
 uvicorn==0.23.0
 supabase==1.0.0
 plotly==5.15.0
+fpdf==1.7.2
+kaleido==0.2.1
