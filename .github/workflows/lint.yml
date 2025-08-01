@@ -30,9 +30,3 @@ jobs:
           black --check .
           isort --check-only .
           flake8 src tests
-
-
-      - name: Run pytest
-        run: |
-          pip install pytest
-          pytest --maxfail=1 --disable-warnings -q

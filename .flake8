@@ -6,6 +6,7 @@ exclude =
     dist/,
     .git/,
     __pycache__,
-    */__pycache__/
+    */__pycache__/,
+    archived_tests
 ignore = E203, W503
 max-line-length = 110
