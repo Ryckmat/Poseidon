@@ -9,24 +9,67 @@ on:
 jobs:
   process:
     runs-on: ubuntu-latest
+    env:
+      # valeurs par défaut ; tu peux aussi les injecter depuis les secrets si tu veux rendre configurables séparément
+      MAX_POWER: 250
+      STABLE_WINDOW_S: 30
+      STABLE_STD_THRESHOLD: 5
+      MIN_STABLE_DURATION_S: 60
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
-      - name: Run ingestion + analysis (placeholder)
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          MAX_POWER: 250
-          STABLE_WINDOW_S: 30
-          STABLE_STD_THRESHOLD: 5
-          MIN_STABLE_DURATION_S: 60
+      - name: Install dependencies
+        run: pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Validate env secret
         run: |
-          echo "À remplacer par l'appel de ton script de traitement"
+          if [ -z "${{ secrets.DATABASE_URL }}" ]; then
+            echo "DATABASE_URL secret is missing" >&2
+            exit 1
+          fi
+
+      - name: Export env vars from secrets
+        run: |
+          echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> $GITHUB_ENV
+
+      - name: Process all new TCX files
+        run: |
+          set -e
+          # pour chaque .tcx dans data/
+          for f in data/*.tcx; do
+            if [ ! -f "$f" ]; then
+              echo "No TCX file found in data/; skipping."
+              continue
+            fi
+            echo "=== Processing $f ==="
+
+            # lancer le parser ; il doit écrire le session ID dans .last_session
+            python src/ingest/parser.py --input "$f" | tee parser_output.log
+
+            # récupération du session ID : on suppose que parser.py écrit le UUID sur la dernière ligne
+            # sinon adapte parser.py pour l'écrire explicitement dans .last_session
+            SESSION_ID=$(tail -n 1 parser_output.log | grep -Eo '[0-9a-fA-F-]{36}' || true)
+            if [ -z "$SESSION_ID" ]; then
+              echo "Could not extract session ID for $f; check parser output."
+              cat parser_output.log
+              exit 1
+            fi
+            echo "Extracted session ID: $SESSION_ID"
+
+            # lancer l'analyse sur cette session
+            python src/processing/analysis.py --session-id "$SESSION_ID"
+          done

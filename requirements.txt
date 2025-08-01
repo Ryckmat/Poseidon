@@ -10,3 +10,4 @@ xmltodict==0.13.0
 fastapi==0.101.0
 uvicorn==0.23.0
 supabase==1.0.0
+plotly==5.15.0

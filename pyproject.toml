@@ -1,0 +1,9 @@
+[project]
+name = "poseidon"
+version = "0.1.0"
+authors = [{name="Kortazo"}]
+dependencies = []
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
