@@ -14,3 +14,6 @@ src/poseidon.egg-info/top_level.txt
 src/processing/__init__.py
 src/processing/analysis.py
 src/utils/__init__.py
+tests/test_analysis.py
+tests/test_regression.py
+tests/test_segments.py
