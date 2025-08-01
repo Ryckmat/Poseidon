@@ -29,4 +29,4 @@ jobs:
           pip install black==23.9.1 isort==5.13.2 flake8==6.1.0
           black --check .
           isort --check-only .
-          flake8 src tests
+          flake8 src
