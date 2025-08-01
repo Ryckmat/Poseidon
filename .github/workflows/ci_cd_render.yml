@@ -26,10 +26,11 @@ jobs:
 
       - name: Lint with black/isort/flake8
         run: |
-          pip install black==23.9.1 isort==6.1.0 flake8==6.1.0
+          pip install black==23.9.1 isort==5.13.2 flake8==6.1.0
           black --check .
           isort --check-only .
           flake8
+
 
       - name: Run pytest
         run: |

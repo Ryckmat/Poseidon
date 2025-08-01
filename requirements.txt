@@ -13,3 +13,6 @@ supabase==1.0.0
 plotly==5.15.0
 fpdf==1.7.2
 kaleido==0.2.1
+black==23.9.1
+isort==5.13.2
+flake8==6.1.0
