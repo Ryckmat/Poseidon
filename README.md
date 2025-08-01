@@ -1,3 +1,4 @@
+![CI](https://github.com/Ryckmat/Poseidon/actions/workflows/process-tcx.yml/badge.svg)
 # Poseidon — Performance Analytics Platform for TCX / Power / Cadence Data
 
 Poseidon is a self-hosted, extensible performance analytics pipeline and dashboard for endurance session files (TCX/GPX/FIT).  
