@@ -1,5 +1,8 @@
 import numpy as np
+import pytest
+
 from src.dashboard.app import regression_with_ci
+
 
 def test_regression_perfect_line():
     x = np.linspace(0, 10, 50)

@@ -1,21 +1,21 @@
 # src/db/models.py
 import os
-from sqlalchemy import (
-    create_engine,
-    Column,
-    String,
-    Numeric,
-    Integer,
-    TIMESTAMP,
-    JSON,
-    ForeignKey,
-    func,
-    text,
-)
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker
-from sqlalchemy.dialects.postgresql import UUID
 import uuid
+
 from dotenv import load_dotenv
+from sqlalchemy import (
+    JSON,
+    TIMESTAMP,
+    Column,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    create_engine,
+    func,
+)
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 load_dotenv()
 
@@ -35,7 +35,9 @@ class RawFile(Base):
     filename = Column(String, nullable=False)
     uploaded_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
     source_url = Column(String, nullable=True)
-    file_metadata = Column("metadata", JSON, nullable=True)  # on mappe la colonne "metadata" sous l’attribut file_metadata
+    file_metadata = Column(
+        "metadata", JSON, nullable=True
+    )  # on mappe la colonne "metadata" sous l’attribut file_metadata
     sessions = relationship("Session", back_populates="raw_file")
 
 
