@@ -1,4 +1,5 @@
 # src/dashboard/app.py
+
 import io
 import os
 import sys
@@ -17,27 +18,81 @@ from sqlalchemy import select
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from db.models import Session, SessionLocal, Trackpoint
 
-# ----------- Utilitaire format hh:mm:ss -----------
+# ----------- Utility: format seconds to hh:mm:ss -----------
 def format_seconds_to_hhmmss(seconds):
+    """Convert seconds to hh:mm:ss string (zero-padded)."""
+    try:
+        seconds = int(seconds)
+    except Exception:
+        return "00:00:00"
     h = int(seconds // 3600)
     m = int((seconds % 3600) // 60)
     s = int(seconds % 60)
     return f"{h:02}:{m:02}:{s:02}"
 
-# detect kaleido availability
-try:
-    import kaleido  # noqa: F401
+# ----------- Power zones (cycling standards) -----------
+DEFAULT_ZONES = [0, 100, 150, 200, 250, 300, 400, 500, 9999]
 
-    HAVE_KALEIDO = True
-except ImportError:
-    HAVE_KALEIDO = False
+def compute_zones(power_series, zones=DEFAULT_ZONES):
+    """
+    Compute time spent in each power zone.
+    Each point is assumed to be ~1 second. Adjust if sampling rate differs.
+    Returns a DataFrame with zone label, time (s), and percentage.
+    """
+    counts, _ = np.histogram(power_series.dropna(), bins=zones)
+    times = counts
+    total = times.sum()
+    pct = times / total * 100 if total > 0 else np.zeros_like(times)
+    # zone labels
+    labels = [
+        f"{zones[i]}–{zones[i+1]-1}W" if zones[i+1] < 9999 else f"{zones[i]}+ W"
+        for i in range(len(zones) - 1)
+    ]
+    return pd.DataFrame({
+        "zone": labels,
+        "time_in_zone_s": times,
+        "percent_time_in_zone": pct
+    })
 
-load_dotenv()
-st.set_page_config(
-    page_title="Poseidon Dashboard", layout="wide", initial_sidebar_state="expanded"
-)
+def compute_cv(series):
+    """
+    Coefficient of variation (std/mean) for a pandas Series.
+    """
+    vals = series.dropna()
+    if len(vals) < 2:
+        return np.nan
+    return np.std(vals) / np.mean(vals) if np.mean(vals) != 0 else np.nan
 
-# ------ i18n + flags ------
+def moving_average(series, window_size_pts=60):
+    """
+    Simple moving average, window in number of points.
+    Default window is 60 points (~1min at 1Hz).
+    """
+    return series.rolling(window=window_size_pts, min_periods=1, center=True).mean()
+
+def compare_stable_segments(primary, compare):
+    """
+    Compare primary and comparison stable segments, matched by duration (longest first).
+    Returns a DataFrame with average power, duration, and deltas.
+    """
+    if not primary or not compare:
+        return pd.DataFrame()
+    primary_sorted = sorted(primary, key=lambda x: -x["duration_s"])
+    compare_sorted = sorted(compare, key=lambda x: -x["duration_s"])
+    rows = []
+    for i in range(min(len(primary_sorted), len(compare_sorted))):
+        p = primary_sorted[i]
+        c = compare_sorted[i]
+        rows.append({
+            "Primary avg power": p["avg_power"],
+            "Primary duration": p["duration_s"],
+            "Compare avg power": c["avg_power"],
+            "Compare duration": c["duration_s"],
+            "Delta power": p["avg_power"] - c["avg_power"],
+            "Delta duration": p["duration_s"] - c["duration_s"],
+        })
+    return pd.DataFrame(rows)
+# ----------- Internationalization (i18n) -----------
 LANGUAGES = {
     "en": {
         "flag": "🇬🇧",
@@ -95,6 +150,12 @@ LANGUAGES = {
         "preset_name": "Preset name",
         "preset_select": "Saved presets",
         "reset_params": "Reset filters",
+        "advanced_tab": "Advanced analysis",
+        "zones": "Power zones",
+        "cv": "Coefficient of Variation (CV)",
+        "compare_stable_segments": "Compare stable segments (top 3 by duration)",
+        "full_export_csv": "Export all session data (CSV)",
+        "full_export_pdf": "Export full PDF summary",
     },
     "fr": {
         "flag": "🇫🇷",
@@ -152,10 +213,19 @@ LANGUAGES = {
         "preset_name": "Nom du preset",
         "preset_select": "Presets enregistrés",
         "reset_params": "Réinitialiser filtres",
+        "advanced_tab": "Analyse avancée",
+        "zones": "Zones de puissance",
+        "cv": "Coefficient de Variation (CV)",
+        "compare_stable_segments": "Comparatif des segments stables (top 3 par durée)",
+        "full_export_csv": "Exporter toutes les données de séance (CSV)",
+        "full_export_pdf": "Exporter le résumé PDF complet",
     },
 }
 
+# ----------- Utility functions for data conversion -----------
+
 def to_number(x):
+    """Convert to float or return None if conversion fails."""
     if x is None:
         return None
     try:
@@ -164,12 +234,14 @@ def to_number(x):
         return None
 
 def metric_value(val, fmt="{:.2f}", fallback="—"):
+    """Format a numeric value for display with fallback."""
     num = to_number(val)
     if num is None or (isinstance(num, float) and (np.isnan(num) or np.isinf(num))):
         return fallback
     return fmt.format(num)
 
 def human_duration(sec):
+    """Display seconds as human readable duration (Xd Xh Xm Xs)."""
     if sec is None:
         return "—"
     try:
@@ -190,6 +262,7 @@ def human_duration(sec):
     return " ".join(parts)
 
 def compute_derived_df(df_raw):
+    """Compute extra columns needed for plotting and analysis."""
     df = df_raw.copy()
     df = df.sort_values("time").reset_index(drop=True)
     df["time"] = pd.to_datetime(df["time"])
@@ -207,6 +280,7 @@ def compute_derived_df(df_raw):
     return df
 
 def rolling_std(arr, window_pts):
+    """Rolling std for an array using pandas."""
     return pd.Series(arr).rolling(window=window_pts, min_periods=1).std().to_numpy()
 
 def detect_stable_segments(
@@ -217,6 +291,10 @@ def detect_stable_segments(
     std_threshold=5,
     min_duration_s=60,
 ):
+    """
+    Identify stable segments in the time series based on power and std.
+    Returns a list of dicts for each stable segment.
+    """
     mask = (
         (~df[power_col].isna())
         & (df[power_col] >= min_power)
@@ -266,6 +344,7 @@ def detect_stable_segments(
     return final
 
 def regression_with_ci(x, y, n_boot=200, ci=0.95):
+    """Linear regression with confidence intervals (bootstrap)."""
     x = np.array(x, dtype=float)
     y = np.array(y, dtype=float)
     mask = (~np.isnan(x)) & (~np.isnan(y))
@@ -318,6 +397,7 @@ def regression_with_ci(x, y, n_boot=200, ci=0.95):
         "r2_bootstrap_mean": r2_mean,
     }
 
+# ---------- Streamlit cache for database ----------
 @st.cache_data(ttl=300)
 def load_sessions():
     db = SessionLocal()
@@ -347,6 +427,7 @@ def load_trackpoints(session_id):
         db.close()
 
 def build_df_from_trackpoints(tps):
+    """Turn a list of ORM trackpoints into a DataFrame."""
     return pd.DataFrame(
         [
             {
@@ -363,6 +444,7 @@ def build_df_from_trackpoints(tps):
         ]
     )
 
+# --------- Preset state (in-memory for now) ----------
 if "presets" not in st.session_state:
     st.session_state.presets = {}
 
@@ -373,6 +455,7 @@ def load_preset(name):
     return st.session_state.presets.get(name, {})
 
 def sanitize_text(s: str) -> str:
+    """Sanitize unicode for PDF export (e.g., dash, quotes)."""
     if not isinstance(s, str):
         return s
     replacements = {
@@ -387,14 +470,22 @@ def sanitize_text(s: str) -> str:
     for k, v in replacements.items():
         s = s.replace(k, v)
     return s
-
 def main():
     global TRANSLATIONS
-    if not HAVE_KALEIDO:
-        st.warning(
-            "kaleido not installed: PDF export charts may fail. Install with `pip install -U kaleido`."
-        )
 
+    # Check for kaleido (used for PDF chart export)
+    try:
+        import kaleido  # noqa: F401
+        HAVE_KALEIDO = True
+    except ImportError:
+        HAVE_KALEIDO = False
+
+    load_dotenv()
+    st.set_page_config(
+        page_title="Poseidon Dashboard", layout="wide", initial_sidebar_state="expanded"
+    )
+
+    # Language and translations
     if "lang" not in st.session_state:
         st.session_state.lang = "en"
     lang_choice = st.sidebar.selectbox(
@@ -593,6 +684,7 @@ def main():
         if not df_primary["speed_kmh"].dropna().empty:
             avg_speed_kmh = df_primary["speed_kmh"].dropna().mean()
 
+    # --- UI: summary metrics ---
     st.subheader(f"{TRANSLATIONS['primary_session']}: {primary_session.id}")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric(TRANSLATIONS["duration"], human_duration(primary_session.duration_s))
@@ -621,7 +713,6 @@ def main():
         metric_value(tss_val, "{:.1f}"),
         help=TRANSLATIONS["tooltip_tss"],
     )
-
     total_pts = len(df_primary)
     kept = df_primary["power_filtered"].count()
     removed = total_pts - kept
@@ -634,11 +725,28 @@ def main():
         )
     )
 
-    tab1, tab2 = st.tabs([TRANSLATIONS["title"], TRANSLATIONS["progression"]])
+    tab1, tab2, tab3 = st.tabs([
+        TRANSLATIONS["title"],
+        TRANSLATIONS["progression"],
+        TRANSLATIONS.get("advanced_tab", "Advanced analysis"),
+    ])
 
+    # ----------- Classic tab: time series and stats -----------
     with tab1:
         st.markdown(f"## {TRANSLATIONS['time_series']}")
-        # ---------  X AXIS in elapsed seconds, formatting ticks as hh:mm:ss -----------
+        max_elapsed = max(
+            df_primary["elapsed_time_s"].max(),
+            df_compare["elapsed_time_s"].max() if df_compare is not None else 0,
+        )
+        tick_every = 300 if max_elapsed > 3600 else 60
+        tickvals = np.arange(0, max_elapsed + tick_every, tick_every)
+        def format_seconds_to_hhmmss(seconds):
+            h = int(seconds // 3600)
+            m = int((seconds % 3600) // 60)
+            s = int(seconds % 60)
+            return f"{h:02}:{m:02}:{s:02}"
+        ticktext = [format_seconds_to_hhmmss(v) for v in tickvals]
+
         fig_power = go.Figure()
         fig_power.add_trace(
             go.Scatter(
@@ -679,14 +787,6 @@ def main():
                     line=dict(color="orange", dash="dash"),
                 )
             )
-        # ---- AXE X HUMAIN -----
-        max_elapsed = max(
-            df_primary["elapsed_time_s"].max(),
-            df_compare["elapsed_time_s"].max() if df_compare is not None else 0,
-        )
-        tick_every = 300 if max_elapsed > 3600 else 60  # 5min ou 1min
-        tickvals = np.arange(0, max_elapsed + tick_every, tick_every)
-        ticktext = [format_seconds_to_hhmmss(v) for v in tickvals]
         fig_power.update_layout(
             title=TRANSLATIONS["power_over_time"],
             xaxis_title="Elapsed Time (hh:mm:ss)",
@@ -707,6 +807,7 @@ def main():
             if sel != "None":
                 idx = seg_labels.index(sel)
                 seg = stable_segments[idx]
+                import copy
                 fig_zoom = copy.deepcopy(fig_power)
                 fig_zoom.update_xaxes(
                     range=[
@@ -741,7 +842,6 @@ def main():
                         line=dict(dash="dash", color="red"),
                     )
                 )
-            # Ticks pour l'axe X
             fig_cad.update_layout(
                 title=TRANSLATIONS["cadence_over_time"],
                 xaxis_title="Elapsed Time (hh:mm:ss)",
@@ -894,27 +994,8 @@ def main():
             )
             st.plotly_chart(fig_ps, use_container_width=True)
 
-        st.markdown(f"## {TRANSLATIONS['stable_segments']}")
-        if stable_segments:
-            seg_df = pd.DataFrame(
-                [
-                    {
-                        "start_time": s["start_time"],
-                        "end_time": s["end_time"],
-                        "duration": human_duration(s["duration_s"]),
-                        "avg_power": s["avg_power"],
-                        "std_power": s["std_power"],
-                        "avg_cadence": s["avg_cadence"],
-                        "avg_speed_kmh": s["avg_speed_kmh"],
-                        "points": s["points"],
-                    }
-                    for s in stable_segments
-                ]
-            )
-            st.dataframe(seg_df)
-        else:
-            st.info(TRANSLATIONS["no_stable"])
 
+        # -- Export buttons --
         st.markdown(f"## {TRANSLATIONS['export']}")
         cleaned = df_primary[
             [
@@ -937,6 +1018,15 @@ def main():
             mime="text/csv",
         )
 
+        # Export ALL (advanced)
+        st.download_button(
+            TRANSLATIONS.get("full_export_csv", "Export all session data (CSV)"),
+            data=df_primary.to_csv(index=False).encode("utf-8"),
+            file_name=f"session_{primary_session.id}_full.csv",
+            mime="text/csv",
+        )
+
+        # PDF export
         if st.button(TRANSLATIONS["download_pdf"]):
             pdf_bytes = make_pdf(
                 primary_session,
@@ -961,49 +1051,33 @@ def main():
                 mime="application/pdf",
             )
 
-        if compare_session:
-            st.markdown(f"## {TRANSLATIONS['comparison_summary']}")
-            comp1, comp2 = st.columns(2)
-            with comp1:
-                st.subheader(TRANSLATIONS["primary"])
-                st.write(
-                    f"- {TRANSLATIONS['duration']}: {human_duration(primary_session.duration_s)}"
-                )
-                st.write(
-                    f"- {TRANSLATIONS['distance']}: {metric_value(primary_session.distance_km, '{:.2f}')} km"
-                )
-                st.write(
-                    f"- {TRANSLATIONS['avg_speed']}: {metric_value(avg_speed_kmh, '{:.2f}')} km/h"
-                )
-            with comp2:
-                st.subheader(TRANSLATIONS["compare"])
-                st.write(
-                    f"- {TRANSLATIONS['duration']}: {human_duration(compare_session.duration_s)}"
-                )
-                st.write(
-                    f"- {TRANSLATIONS['distance']}: {metric_value(compare_session.distance_km, '{:.2f}')} km"
-                )
-                avg_speed_cmp = to_number(compare_session.avg_speed_kmh)
-                if avg_speed_cmp is None or np.isnan(avg_speed_cmp):
-                    if (
-                        df_compare is not None
-                        and not df_compare["speed_kmh"].dropna().empty
-                    ):
-                        avg_speed_cmp = df_compare["speed_kmh"].dropna().mean()
-                st.write(
-                    f"- {TRANSLATIONS['avg_speed']}: {metric_value(avg_speed_cmp, '{:.2f}')} km/h"
-                )
-            delta_distance = to_number(primary_session.distance_km) - to_number(
-                compare_session.distance_km
+        # Full PDF export (advanced)
+        if st.button(TRANSLATIONS.get("full_export_pdf", "Export full PDF summary")):
+            pdf_bytes = make_pdf(
+                primary_session,
+                df_primary,
+                stable_segments,
+                reg_pc,
+                reg_ps,
+                compare_session,
+                df_compare,
+                reg_pc_comp,
+                reg_ps_comp,
+                avg_speed_kmh,
+                ftp_est,
+                npower,
+                tss_val,
+                TRANSLATIONS,
+                advanced=True,
             )
-            delta_speed = avg_speed_kmh - (avg_speed_cmp or 0)
-            st.markdown(
-                f"**{TRANSLATIONS['delta_distance']}:** {metric_value(delta_distance, '{:.2f}')} km"
-            )
-            st.markdown(
-                f"**{TRANSLATIONS['delta_avg_speed']}:** {metric_value(delta_speed, '{:.2f}')} km/h"
+            st.download_button(
+                "📄 " + TRANSLATIONS.get("full_export_pdf", "Export full PDF summary"),
+                data=pdf_bytes,
+                file_name=f"session_{primary_session.id}_full_report.pdf",
+                mime="application/pdf",
             )
 
+    # ---------- Progression tab ----------
     with tab2:
         st.markdown(f"## {TRANSLATIONS['weekly_trends']}")
         all_records = []
@@ -1054,6 +1128,61 @@ def main():
             st.plotly_chart(fig_np, use_container_width=True)
             st.plotly_chart(fig_tss, use_container_width=True)
 
+    # ---------- Advanced tab: power zones, CV, stable segments comparatif, etc. ----------
+    with tab3:
+        st.header(TRANSLATIONS.get("advanced_tab", "Advanced analysis"))
+        # Example: Power zones, coefficient of variation, etc.
+        st.markdown(f"### {TRANSLATIONS.get('zones', 'Power zones')}")
+        # Simple cycling power zones
+        if ftp_est and not np.isnan(ftp_est):
+            zones = [
+                (0.0, 0.55, "Z1", "Active Recovery"),
+                (0.55, 0.75, "Z2", "Endurance"),
+                (0.75, 0.90, "Z3", "Tempo"),
+                (0.90, 1.05, "Z4", "Threshold"),
+                (1.05, 1.20, "Z5", "VO2max"),
+                (1.20, 1.50, "Z6", "Anaerobic"),
+                (1.50, 10.0, "Z7", "Neuromuscular"),
+            ]
+            zone_df = pd.DataFrame([
+                {
+                    "Zone": z[2],
+                    "Name": z[3],
+                    "From": f"{int(z[0]*ftp_est)} W",
+                    "To": f"{int(z[1]*ftp_est)} W",
+                    "Time in zone": human_duration(
+                        ((df_primary["power_filtered"] >= z[0]*ftp_est) & (df_primary["power_filtered"] < z[1]*ftp_est)).sum() * median_dt
+                    ),
+                }
+                for z in zones
+            ])
+            st.dataframe(zone_df)
+        # CV (Coefficient of Variation)
+        st.markdown(f"### {TRANSLATIONS.get('cv', 'Coefficient of Variation (CV)')}")
+        if df_primary["power_filtered"].dropna().size > 2:
+            cv = df_primary["power_filtered"].std() / df_primary["power_filtered"].mean()
+            st.write(f"CV = {cv:.2%}")
+
+        # Compare top 3 stable segments between sessions if comparison loaded
+        if compare_session and stable_segments:
+            st.markdown(f"### {TRANSLATIONS.get('compare_stable_segments', 'Compare stable segments')}")
+            compare_stable = detect_stable_segments(
+                df_compare,
+                power_col="power_filtered",
+                std_col="power_std",
+                min_power=min_stable_power,
+                std_threshold=std_thresh,
+                min_duration_s=min_segment_duration,
+            ) if df_compare is not None else []
+            top_primary = sorted(stable_segments, key=lambda s: -s["duration_s"])[:3]
+            top_compare = sorted(compare_stable, key=lambda s: -s["duration_s"])[:3]
+            for idx, (s1, s2) in enumerate(zip(top_primary, top_compare)):
+                st.write(
+                    f"**#{idx+1}** | "
+                    f"Primary: {human_duration(s1['duration_s'])} @ {s1['avg_power']:.0f}W — "
+                    f"Compare: {human_duration(s2['duration_s'])} @ {s2['avg_power']:.0f}W"
+                )
+
 def make_pdf(
     primary_session,
     df_primary,
@@ -1069,7 +1198,13 @@ def make_pdf(
     npower,
     tss_val,
     TRANSLATIONS,
+    advanced=False,
 ):
+    import io
+    from fpdf import FPDF
+    import plotly.io as pio
+    import numpy as np
+
     def sanitize_text(s: str) -> str:
         if not isinstance(s, str):
             return s
@@ -1147,7 +1282,6 @@ def make_pdf(
         ln=True,
     )
     pdf.ln(5)
-
     try:
         fig_power = go.Figure()
         fig_power.add_trace(
@@ -1168,6 +1302,11 @@ def make_pdf(
             )
         max_elapsed = df_primary["elapsed_time_s"].max()
         tick_every = 300 if max_elapsed > 3600 else 60
+        def format_seconds_to_hhmmss(seconds):
+            h = int(seconds // 3600)
+            m = int((seconds % 3600) // 60)
+            s = int(seconds % 60)
+            return f"{h:02}:{m:02}:{s:02}"
         tickvals = np.arange(0, max_elapsed + tick_every, tick_every)
         ticktext = [format_seconds_to_hhmmss(v) for v in tickvals]
         fig_power.update_layout(
@@ -1200,6 +1339,15 @@ def make_pdf(
         for s in stable_segments[:5]:
             line = f"- {human_duration(s['duration_s'])} @ {s['avg_power']:.1f}W (std {s['std_power']:.1f})"
             pdf.cell(0, 5, sanitize_text(line), ln=True)
+
+    if advanced:
+        pdf.add_page()
+        pdf.set_font("Arial", "B", 14)
+        pdf.cell(0, 10, "Full Session Data (first 40 rows)", ln=True)
+        pdf.set_font("Arial", size=8)
+        for idx, row in df_primary.head(40).iterrows():
+            vals = ", ".join(str(row[c]) for c in df_primary.columns)
+            pdf.cell(0, 5, vals[:180], ln=True)
 
     return pdf.output(dest="S").encode("latin1", errors="replace")
 
