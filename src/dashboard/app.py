@@ -1,5 +1,3 @@
-import copy
-import io
 import os
 import sys
 
@@ -7,14 +5,13 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import plotly.io as pio
 import streamlit as st
 from dotenv import load_dotenv
-from fpdf import FPDF
 from sqlalchemy import select
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from db.models import Session, SessionLocal, Trackpoint
+
 
 def format_seconds_to_hhmmss(seconds):
     try:
@@ -26,7 +23,9 @@ def format_seconds_to_hhmmss(seconds):
     s = int(seconds % 60)
     return f"{h:02}:{m:02}:{s:02}"
 
+
 DEFAULT_ZONES = [0, 100, 150, 200, 250, 300, 400, 500, 9999]
+
 
 def compute_zones(power_series, zones=DEFAULT_ZONES):
     counts, _ = np.histogram(power_series.dropna(), bins=zones)
@@ -41,14 +40,17 @@ def compute_zones(power_series, zones=DEFAULT_ZONES):
         {"zone": labels, "time_in_zone_s": times, "percent_time_in_zone": pct}
     )
 
+
 def compute_cv(series):
     vals = series.dropna()
     if len(vals) < 2:
         return np.nan
     return np.std(vals) / np.mean(vals) if np.mean(vals) != 0 else np.nan
 
+
 def moving_average(series, window_size_pts=60):
     return series.rolling(window=window_size_pts, min_periods=1, center=True).mean()
+
 
 def compare_stable_segments(primary, compare):
     if not primary or not compare:
@@ -70,6 +72,8 @@ def compare_stable_segments(primary, compare):
             }
         )
     return pd.DataFrame(rows)
+
+
 # ----------- Internationalization (i18n) -----------
 LANGUAGES = {
     "en": {
@@ -244,6 +248,7 @@ LANGUAGES = {
 
 # ----------- Utility functions for data conversion -----------
 
+
 def to_number(x):
     """Convert to float or return None if conversion fails."""
     if x is None:
@@ -253,12 +258,14 @@ def to_number(x):
     except (ValueError, TypeError):
         return None
 
+
 def metric_value(val, fmt="{:.2f}", fallback="—"):
     """Format a numeric value for display with fallback."""
     num = to_number(val)
     if num is None or (isinstance(num, float) and (np.isnan(num) or np.isinf(num))):
         return fallback
     return fmt.format(num)
+
 
 def human_duration(sec):
     """Display seconds as human readable duration (Xd Xh Xm Xs)."""
@@ -281,6 +288,7 @@ def human_duration(sec):
     parts.append(f"{secs}s")
     return " ".join(parts)
 
+
 def compute_derived_df(df_raw):
     """Compute extra columns needed for plotting and analysis."""
     df = df_raw.copy()
@@ -290,18 +298,24 @@ def compute_derived_df(df_raw):
     df["time_diff_s"] = df["time"].diff().dt.total_seconds().fillna(0)
     df["delta_dist"] = df["distance_m"].diff().fillna(0)
     df["speed_m_s"] = np.where(
-        df["time_diff_s"] > 0, df["delta_dist"] / df["time_diff_s"], np.nan,
+        df["time_diff_s"] > 0,
+        df["delta_dist"] / df["time_diff_s"],
+        np.nan,
     )
     df["speed_kmh"] = df["speed_m_s"] * 3.6
     df["pace_min_per_km"] = np.where(
-        df["speed_m_s"] > 0, (1 / df["speed_m_s"]) / 60 * 1000, np.nan,
+        df["speed_m_s"] > 0,
+        (1 / df["speed_m_s"]) / 60 * 1000,
+        np.nan,
     )
     df["elevation_diff"] = df["altitude_m"].diff().fillna(0)
     return df
 
+
 def rolling_std(arr, window_pts):
     """Rolling std for an array using pandas."""
     return pd.Series(arr).rolling(window=window_pts, min_periods=1).std().to_numpy()
+
 
 def detect_stable_segments(
     df,
@@ -363,6 +377,7 @@ def detect_stable_segments(
             )
     return final
 
+
 def regression_with_ci(x, y, n_boot=200, ci=0.95):
     """Linear regression with confidence intervals (bootstrap)."""
     x = np.array(x, dtype=float)
@@ -417,6 +432,7 @@ def regression_with_ci(x, y, n_boot=200, ci=0.95):
         "r2_bootstrap_mean": r2_mean,
     }
 
+
 # ---------- Streamlit cache for database ----------
 @st.cache_data(ttl=300)
 def load_sessions():
@@ -429,6 +445,7 @@ def load_sessions():
         )
     finally:
         db.close()
+
 
 @st.cache_data(ttl=300)
 def load_trackpoints(session_id):
@@ -445,6 +462,7 @@ def load_trackpoints(session_id):
         )
     finally:
         db.close()
+
 
 def build_df_from_trackpoints(tps):
     """Turn a list of ORM trackpoints into a DataFrame."""
@@ -464,15 +482,19 @@ def build_df_from_trackpoints(tps):
         ]
     )
 
+
 # --------- Preset state (in-memory for now) ----------
 if "presets" not in st.session_state:
     st.session_state.presets = {}
 
+
 def save_preset(name, params):
     st.session_state.presets[name] = params
 
+
 def load_preset(name):
     return st.session_state.presets.get(name, {})
+
 
 def sanitize_text(s: str) -> str:
     """Sanitize unicode for PDF export (e.g., dash, quotes)."""
@@ -490,16 +512,10 @@ def sanitize_text(s: str) -> str:
     for k, v in replacements.items():
         s = s.replace(k, v)
     return s
+
+
 def main():
-    global TRANSLATIONS
-
-    # Check for kaleido (used for PDF chart export)
-    try:
-        import kaleido  # noqa: F401
-        HAVE_KALEIDO = True
-    except ImportError:
-        HAVE_KALEIDO = False
-
+    global TRANSLATIONSz
     load_dotenv()
     st.set_page_config(
         page_title="Poseidon Dashboard", layout="wide", initial_sidebar_state="expanded"
@@ -754,7 +770,7 @@ def main():
         ]
     )
 
-        # ----------- Classic tab: time series and stats ----------- 
+    # ----------- Classic tab: time series and stats -----------
     with tab1:
         st.markdown(f"## {TRANSLATIONS['time_series']}")
         max_elapsed = max(
@@ -1165,43 +1181,104 @@ def main():
             "cadence": TRANSLATIONS["Cadence (rpm)"],
             "speed_kmh": TRANSLATIONS["Speed (km/h)"],
         }
-        stats_table = pd.DataFrame({
-            TRANSLATIONS["Mean"]: [df_primary[c].mean() for c in cols_stats],
-            TRANSLATIONS["Median"]: [df_primary[c].median() for c in cols_stats],
-            TRANSLATIONS["Min"]: [df_primary[c].min() for c in cols_stats],
-            TRANSLATIONS["Max"]: [df_primary[c].max() for c in cols_stats],
-            TRANSLATIONS["Std"]: [df_primary[c].std() for c in cols_stats],
-        }, index=[labels_stats[c] for c in cols_stats])
+        stats_table = pd.DataFrame(
+            {
+                TRANSLATIONS["Mean"]: [df_primary[c].mean() for c in cols_stats],
+                TRANSLATIONS["Median"]: [df_primary[c].median() for c in cols_stats],
+                TRANSLATIONS["Min"]: [df_primary[c].min() for c in cols_stats],
+                TRANSLATIONS["Max"]: [df_primary[c].max() for c in cols_stats],
+                TRANSLATIONS["Std"]: [df_primary[c].std() for c in cols_stats],
+            },
+            index=[labels_stats[c] for c in cols_stats],
+        )
         st.dataframe(stats_table.style.format("{:.2f}"))
 
         # ---------- 2. Dispersion (boxplots) -------------------
         st.subheader(TRANSLATIONS["Dispersion (Boxplots)"])
         box_col1, box_col2, box_col3 = st.columns(3)
         with box_col1:
-            st.plotly_chart(px.box(df_primary, y="power_filtered", points="outliers",
-                                title=TRANSLATIONS["Power (W)"]), use_container_width=True)
+            st.plotly_chart(
+                px.box(
+                    df_primary,
+                    y="power_filtered",
+                    points="outliers",
+                    title=TRANSLATIONS["Power (W)"],
+                ),
+                use_container_width=True,
+            )
         with box_col2:
-            st.plotly_chart(px.box(df_primary, y="cadence", points="outliers",
-                                title=TRANSLATIONS["Cadence (rpm)"]), use_container_width=True)
+            st.plotly_chart(
+                px.box(
+                    df_primary,
+                    y="cadence",
+                    points="outliers",
+                    title=TRANSLATIONS["Cadence (rpm)"],
+                ),
+                use_container_width=True,
+            )
         with box_col3:
-            st.plotly_chart(px.box(df_primary, y="speed_kmh", points="outliers",
-                                title=TRANSLATIONS["Speed (km/h)"]), use_container_width=True)
+            st.plotly_chart(
+                px.box(
+                    df_primary,
+                    y="speed_kmh",
+                    points="outliers",
+                    title=TRANSLATIONS["Speed (km/h)"],
+                ),
+                use_container_width=True,
+            )
 
         # ---------- 3. Power zones (TABLEAU DETALILLE) ---------
         st.subheader("Power zones")
 
         power_zone_defs = [
-            {"zone": "Z1", "name": {"en": "Active Recovery", "fr": "Récup. active"}, "from": 0, "to": 34},
-            {"zone": "Z2", "name": {"en": "Endurance", "fr": "Endurance"}, "from": 34, "to": 47},
-            {"zone": "Z3", "name": {"en": "Tempo", "fr": "Tempo"}, "from": 47, "to": 56},
-            {"zone": "Z4", "name": {"en": "Threshold", "fr": "Seuil"}, "from": 56, "to": 66},
-            {"zone": "Z5", "name": {"en": "VO2max", "fr": "VO2max"}, "from": 66, "to": 75},
-            {"zone": "Z6", "name": {"en": "Anaerobic", "fr": "Anaérobie"}, "from": 75, "to": 94},
-            {"zone": "Z7", "name": {"en": "Neuromuscular", "fr": "Neuromusculaire"}, "from": 94, "to": 633},
+            {
+                "zone": "Z1",
+                "name": {"en": "Active Recovery", "fr": "Récup. active"},
+                "from": 0,
+                "to": 34,
+            },
+            {
+                "zone": "Z2",
+                "name": {"en": "Endurance", "fr": "Endurance"},
+                "from": 34,
+                "to": 47,
+            },
+            {
+                "zone": "Z3",
+                "name": {"en": "Tempo", "fr": "Tempo"},
+                "from": 47,
+                "to": 56,
+            },
+            {
+                "zone": "Z4",
+                "name": {"en": "Threshold", "fr": "Seuil"},
+                "from": 56,
+                "to": 66,
+            },
+            {
+                "zone": "Z5",
+                "name": {"en": "VO2max", "fr": "VO2max"},
+                "from": 66,
+                "to": 75,
+            },
+            {
+                "zone": "Z6",
+                "name": {"en": "Anaerobic", "fr": "Anaérobie"},
+                "from": 75,
+                "to": 94,
+            },
+            {
+                "zone": "Z7",
+                "name": {"en": "Neuromuscular", "fr": "Neuromusculaire"},
+                "from": 94,
+                "to": 633,
+            },
         ]
         bins = [z["from"] for z in power_zone_defs] + [power_zone_defs[-1]["to"]]
         labels = [z["zone"] for z in power_zone_defs]
-        df_primary["custom_power_zone"] = pd.cut(df_primary["power_filtered"], bins=bins, labels=labels, right=False)
+        df_primary["custom_power_zone"] = pd.cut(
+            df_primary["power_filtered"], bins=bins, labels=labels, right=False
+        )
 
         dt_median = np.median(np.diff(df_primary["elapsed_time_s"].dropna()))
         zone_summary = []
@@ -1211,67 +1288,96 @@ def main():
             minutes = seconds // 60
             sec = seconds % 60
             t_human = f"{minutes}m {sec}s" if minutes else f"{sec}s"
-            zone_summary.append({
-                "Zone": z["zone"],
-                "Name": z["name"][st.session_state.lang],
-                "From": f"{z['from']} W",
-                "To": f"{z['to']} W",
-                "Time in zone": t_human,
-            })
+            zone_summary.append(
+                {
+                    "Zone": z["zone"],
+                    "Name": z["name"][st.session_state.lang],
+                    "From": f"{z['from']} W",
+                    "To": f"{z['to']} W",
+                    "Time in zone": t_human,
+                }
+            )
         df_zone_table = pd.DataFrame(zone_summary)
         st.dataframe(df_zone_table)
 
         # ---------- 4. Meilleurs efforts rolling 5s, 1min, 5min, 20min ----------
-        st.subheader({
-            "en": "Best average power (5s, 1min, 5min, 20min)",
-            "fr": "Meilleurs efforts moyens (5s, 1min, 5min, 20min)"
-        }[st.session_state.lang])
+        st.subheader(
+            {
+                "en": "Best average power (5s, 1min, 5min, 20min)",
+                "fr": "Meilleurs efforts moyens (5s, 1min, 5min, 20min)",
+            }[st.session_state.lang]
+        )
+
         def best_effort(series, elapsed_s, win_sec):
             dt = np.median(np.diff(elapsed_s))
             win_pts = max(1, int(round(win_sec / dt))) if dt > 0 else 1
             return pd.Series(series).rolling(win_pts, min_periods=1).mean().max()
-        best5s = best_effort(df_primary["power_filtered"].values, df_primary["elapsed_time_s"].values, 5)
-        best1m = best_effort(df_primary["power_filtered"].values, df_primary["elapsed_time_s"].values, 60)
-        best5m = best_effort(df_primary["power_filtered"].values, df_primary["elapsed_time_s"].values, 300)
-        best20m = best_effort(df_primary["power_filtered"].values, df_primary["elapsed_time_s"].values, 1200)
-        st.markdown(f"5s: {best5s:.0f}W, 1min: {best1m:.0f}W, 5min: {best5m:.0f}W, 20min: {best20m:.0f}W")
-        best_avg_df = pd.DataFrame({
-            "Interval": ["5s", "1min", "5min", "20min"],
-            "Best Power (W)": [best5s, best1m, best5m, best20m]
-        })
+
+        best5s = best_effort(
+            df_primary["power_filtered"].values, df_primary["elapsed_time_s"].values, 5
+        )
+        best1m = best_effort(
+            df_primary["power_filtered"].values, df_primary["elapsed_time_s"].values, 60
+        )
+        best5m = best_effort(
+            df_primary["power_filtered"].values,
+            df_primary["elapsed_time_s"].values,
+            300,
+        )
+        best20m = best_effort(
+            df_primary["power_filtered"].values,
+            df_primary["elapsed_time_s"].values,
+            1200,
+        )
+        st.markdown(
+            f"5s: {best5s:.0f}W, 1min: {best1m:.0f}W, 5min: {best5m:.0f}W, 20min: {best20m:.0f}W"
+        )
+        best_avg_df = pd.DataFrame(
+            {
+                "Interval": ["5s", "1min", "5min", "20min"],
+                "Best Power (W)": [best5s, best1m, best5m, best20m],
+            }
+        )
 
         st.plotly_chart(
             px.bar(
-                best_avg_df, 
-                x="Interval", 
+                best_avg_df,
+                x="Interval",
                 y="Best Power (W)",
                 text="Best Power (W)",
                 title="Best average power over key intervals",
                 labels={"Interval": "Interval", "Best Power (W)": "Best Power (W)"},
-            ).update_traces(texttemplate='%{text:.0f}W', textposition='outside'),
-            use_container_width=True
+            ).update_traces(texttemplate="%{text:.0f}W", textposition="outside"),
+            use_container_width=True,
         )
 
         # ---------- 5. Variabilité cadence -----------------
-        st.subheader({
-            "en": "Cadence variability",
-            "fr": "Variabilité cadence"
-        }[st.session_state.lang])
+        st.subheader(
+            {"en": "Cadence variability", "fr": "Variabilité cadence"}[
+                st.session_state.lang
+            ]
+        )
         mean_cad = df_primary["cadence"].mean()
         std_cad = df_primary["cadence"].std()
-        st.write({
-            "en": f"Mean: {mean_cad:.1f} rpm, Std: {std_cad:.1f} rpm",
-            "fr": f"Moyenne: {mean_cad:.1f} rpm, Écart-type: {std_cad:.1f} rpm"
-        }[st.session_state.lang])
+        st.write(
+            {
+                "en": f"Mean: {mean_cad:.1f} rpm, Std: {std_cad:.1f} rpm",
+                "fr": f"Moyenne: {mean_cad:.1f} rpm, Écart-type: {std_cad:.1f} rpm",
+            }[st.session_state.lang]
+        )
 
         # ---------- 6. Longest streak above power threshold ----------
-        st.subheader({
-            "en": "Longest streak between 100W and 250W",
-            "fr": "Plus longue séquence entre 100W et 250W"
-        }[st.session_state.lang])
+        st.subheader(
+            {
+                "en": "Longest streak between 100W and 250W",
+                "fr": "Plus longue séquence entre 100W et 250W",
+            }[st.session_state.lang]
+        )
         min_power_thr = 100
         max_power_thr = 250
-        mask = (df_primary["power_filtered"] >= min_power_thr) & (df_primary["power_filtered"] < max_power_thr)
+        mask = (df_primary["power_filtered"] >= min_power_thr) & (
+            df_primary["power_filtered"] < max_power_thr
+        )
         max_len = 0
         current_len = 0
         for v in mask.values:
@@ -1288,11 +1394,12 @@ def main():
             s = int(seconds % 60)
             return f"{h:02}:{m:02}:{s:02}"
 
-        st.write({
-            "en": f"Max streak: {format_seconds_to_hhmmss(streak_s)} between {min_power_thr}W and {max_power_thr}W",
-            "fr": f"Séquence max : {format_seconds_to_hhmmss(streak_s)} entre {min_power_thr}W et {max_power_thr}W"
-        }[st.session_state.lang])
-
+        st.write(
+            {
+                "en": f"Max streak: {format_seconds_to_hhmmss(streak_s)} between {min_power_thr}W and {max_power_thr}W",
+                "fr": f"Séquence max : {format_seconds_to_hhmmss(streak_s)} entre {min_power_thr}W et {max_power_thr}W",
+            }[st.session_state.lang]
+        )
 
 
 def make_pdf(
@@ -1465,6 +1572,7 @@ def make_pdf(
             pdf.cell(0, 5, vals[:180], ln=True)
 
     return pdf.output(dest="S").encode("latin1", errors="replace")
+
 
 if __name__ == "__main__":
     main()
