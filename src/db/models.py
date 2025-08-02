@@ -1,6 +1,7 @@
 # src/db/models.py
 import os
 import uuid
+
 from dotenv import load_dotenv
 from sqlalchemy import (
     JSON,
@@ -10,9 +11,9 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    UniqueConstraint,
     create_engine,
     func,
-    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker

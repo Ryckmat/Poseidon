@@ -14,12 +14,11 @@ jobs:
       STABLE_WINDOW_S: 30
       STABLE_STD_THRESHOLD: 5
       MIN_STABLE_DURATION_S: 60
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
@@ -28,49 +27,54 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml', '**/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: Install dependencies
+      - name: Install package in editable mode
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -e .  # installe le projet via pyproject.toml
 
-      - name: Validate DATABASE_URL secret
+      - name: Validate env secret
         run: |
           if [ -z "${{ secrets.DATABASE_URL }}" ]; then
-            echo "DATABASE_URL is missing" >&2
+            echo "DATABASE_URL secret is missing" >&2
             exit 1
           fi
 
-      - name: Export DATABASE_URL
-        run: echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> $GITHUB_ENV
-
-      - name: Process TCX files
+      - name: Export env vars from secrets
         run: |
-          set -euo pipefail
-          mkdir -p data/processed
+          echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> $GITHUB_ENV
+
+      - name: Process all new TCX files
+        run: |
+          set -e
           for f in data/*.tcx; do
-            [ -f "$f" ] || continue
-            base=$(basename "$f")
-            marker="data/processed/${base}.done"
-            if [ -f "$marker" ]; then
-              echo "✅ $base already processed"
+            if [ ! -f "$f" ]; then
+              echo "No TCX file found in data/; skipping."
+              continue
+            fi
+            echo "=== Processing $f ==="
+            # Lance le parser
+            PARSER_OUTPUT=$(python -m ingest.parser --input "$f" 2>&1 || true)
+            echo "$PARSER_OUTPUT" | tee parser_output.log
+
+            if echo "$PARSER_OUTPUT" | grep -q "ALREADY_PROCESSED"; then
+              SESSION_ID=$(echo "$PARSER_OUTPUT" | grep "ALREADY_PROCESSED" | awk '{print $2}')
+              echo "Session $SESSION_ID already ingéré, skip analysis."
               continue
             fi
 
-            echo "➤ Processing $base"
-            out=$(python src/ingest/parser.py --input "$f")
-            echo "$out"
-            sid=$(echo "$out" | grep -Po '(?<="session_id": ")[^"]+')
-            if [ -z "$sid" ]; then
-              echo "❌ Could not extract session_id"
+            # extraire le session_id créé
+            SESSION_ID=$(echo "$PARSER_OUTPUT" | grep -Eo '[0-9a-fA-F-]{36}')
+            if [ -z "$SESSION_ID" ]; then
+              echo "Could not extract session ID for $f; check parser output."
+              cat parser_output.log
               exit 1
             fi
-            echo "Session ID: $sid"
+            echo "Extracted session ID: $SESSION_ID"
 
-            python src/processing/analysis.py --session-id "$sid"
-
-            touch "$marker"
+            # lancer l'analyse uniquement si nouvelle session
+            python -m processing.analysis --session-id "$SESSION_ID"
           done

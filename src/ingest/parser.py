@@ -1,13 +1,13 @@
-import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
-import sys
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session as OrmSession
 
-from db.models import RawFile, Session as SessionModel, SessionLocal, Trackpoint
+from db.models import RawFile
+from db.models import Session as SessionModel
+from db.models import SessionLocal, Trackpoint
 
 
 def parse_tcx_and_store(input_path: str, force_new: bool = False):
@@ -28,7 +28,9 @@ def parse_tcx_and_store(input_path: str, force_new: bool = False):
 
         if existing_raw and not force_new:
             raw_file = existing_raw
-            print(f"[INFO] RawFile '{input_path.name}' already exists (id={raw_file.id})")
+            print(
+                f"[INFO] RawFile '{input_path.name}' already exists (id={raw_file.id})"
+            )
         else:
             raw_file = RawFile(filename=input_path.name)
             db.add(raw_file)
@@ -54,7 +56,9 @@ def parse_tcx_and_store(input_path: str, force_new: bool = False):
         )
         if existing_sessions:
             session_obj = existing_sessions[0]
-            print(f"[INFO] Found existing session (id={session_obj.id}) for file {input_path.name}")
+            print(
+                f"[INFO] Found existing session (id={session_obj.id}) for file {input_path.name}"
+            )
 
     if session_obj is None:
         # Extract minimal start/end from trackpoints
@@ -76,7 +80,11 @@ def parse_tcx_and_store(input_path: str, force_new: bool = False):
             raw_file_id=raw_file.id,
             start_time=start_time,
             end_time=end_time,
-            duration_s=((end_time - start_time).total_seconds() if start_time and end_time else None),
+            duration_s=(
+                (end_time - start_time).total_seconds()
+                if start_time and end_time
+                else None
+            ),
             distance_km=None,
             elevation_gain_m=None,
             avg_heart_rate=None,
@@ -85,15 +93,14 @@ def parse_tcx_and_store(input_path: str, force_new: bool = False):
         db.add(session_obj)
         db.commit()
         db.refresh(session_obj)
-        print(f"[INFO] Created new session (id={session_obj.id}) for file {input_path.name}")
+        print(
+            f"[INFO] Created new session (id={session_obj.id}) for file {input_path.name}"
+        )
 
     # === Early exit if already ingéré ===
-    has_trackpoints = (
-        db.execute(
-            select(func.count(Trackpoint.id)).where(Trackpoint.session_id == session_obj.id)
-        )
-        .scalar_one()
-    )
+    has_trackpoints = db.execute(
+        select(func.count(Trackpoint.id)).where(Trackpoint.session_id == session_obj.id)
+    ).scalar_one()
     if has_trackpoints and not force_new:
         print(f"ALREADY_PROCESSED {session_obj.id}")
         db.close()
@@ -103,7 +110,9 @@ def parse_tcx_and_store(input_path: str, force_new: bool = False):
     try:
         if force_new and has_trackpoints:
             db.execute(
-                Trackpoint.__table__.delete().where(Trackpoint.session_id == session_obj.id)
+                Trackpoint.__table__.delete().where(
+                    Trackpoint.session_id == session_obj.id
+                )
             )
             db.commit()
 
@@ -167,7 +176,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Parse TCX and ingest into DB")
     parser.add_argument("--input", required=True, help="Path to .tcx file")
-    parser.add_argument("--force-new", action="store_true", help="Force new session even if existing")
+    parser.add_argument(
+        "--force-new", action="store_true", help="Force new session even if existing"
+    )
     args = parser.parse_args()
     sid = parse_tcx_and_store(args.input, force_new=args.force_new)
     # si c'était déjà ingéré, on a déjà imprimé ALREADY_PROCESSED en tête
