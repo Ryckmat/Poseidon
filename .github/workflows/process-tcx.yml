@@ -10,6 +10,7 @@ jobs:
   process:
     runs-on: ubuntu-latest
     env:
+      # valeurs par défaut ; tu peux aussi les injecter depuis les secrets si tu veux rendre configurables séparément
       MAX_POWER: 250
       STABLE_WINDOW_S: 30
       STABLE_STD_THRESHOLD: 5
@@ -33,12 +34,6 @@ jobs:
 
       - name: Install dependencies
         run: pip install --upgrade pip && pip install -r requirements.txt
-      
-      - name: Install local package
-        run: pip install -e .
-
-      - name: Install env
-        run: pip install -e .
 
       - name: Validate env secret
         run: |
@@ -53,34 +48,28 @@ jobs:
 
       - name: Process all new TCX files
         run: |
-          set -euo pipefail
-          shopt -s globstar
-          for f in data/**/*.tcx; do
+          set -e
+          # pour chaque .tcx dans data/
+          for f in data/*.tcx; do
+            if [ ! -f "$f" ]; then
+              echo "No TCX file found in data/; skipping."
+              continue
+            fi
             echo "=== Processing $f ==="
-            if [[ ! -f "$f" ]]; then
-              echo "No TCX file found at $f; skipping."
-              continue
-            fi
 
-            parser_output=$(python src/ingest/parser.py --input "$f" 2>&1) || {
-              echo "[ERROR] parser.py failed for $f"
-              echo "$parser_output"
-              continue
-            }
-            echo "$parser_output" | tee parser_output.log
+            # lancer le parser ; il doit écrire le session ID dans .last_session
+            python src/ingest/parser.py --input "$f" | tee parser_output.log
 
-            # Extraction du session ID (nouveau ou déjà existant)
-            SESSION_ID=$(printf '%s\n' "$parser_output" | grep -E '^SESSION_ID:' | head -n1 | cut -d':' -f2 | tr -d '\r\n')
-            if [[ -z "$SESSION_ID" ]]; then
-              SESSION_ID=$(printf '%s\n' "$parser_output" | grep -E '^ALREADY_PROCESSED' | head -n1 | awk '{print $2}' | tr -d '\r\n')
-            fi
-
-            if [[ -z "$SESSION_ID" ]]; then
-              echo "[ERROR] Could not extract session ID for $f; parser output below:" >&2
-              echo "$parser_output" >&2
-              continue
+            # récupération du session ID : on suppose que parser.py écrit le UUID sur la dernière ligne
+            # sinon adapte parser.py pour l'écrire explicitement dans .last_session
+            SESSION_ID=$(tail -n 1 parser_output.log | grep -Eo '[0-9a-fA-F-]{36}' || true)
+            if [ -z "$SESSION_ID" ]; then
+              echo "Could not extract session ID for $f; check parser output."
+              cat parser_output.log
+              exit 1
             fi
             echo "Extracted session ID: $SESSION_ID"
+
             # lancer l'analyse sur cette session
             python src/processing/analysis.py --session-id $SESSION_ID
           done
