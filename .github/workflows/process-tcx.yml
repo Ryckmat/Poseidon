@@ -10,16 +10,16 @@ jobs:
   process:
     runs-on: ubuntu-latest
     env:
-      # valeurs par défaut ; tu peux aussi les injecter depuis les secrets si tu veux rendre configurables séparément
       MAX_POWER: 250
       STABLE_WINDOW_S: 30
       STABLE_STD_THRESHOLD: 5
       MIN_STABLE_DURATION_S: 60
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
@@ -33,43 +33,44 @@ jobs:
             ${{ runner.os }}-pip-
 
       - name: Install dependencies
-        run: pip install --upgrade pip && pip install -r requirements.txt
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Validate env secret
+      - name: Validate DATABASE_URL secret
         run: |
           if [ -z "${{ secrets.DATABASE_URL }}" ]; then
-            echo "DATABASE_URL secret is missing" >&2
+            echo "DATABASE_URL is missing" >&2
             exit 1
           fi
 
-      - name: Export env vars from secrets
-        run: |
-          echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> $GITHUB_ENV
+      - name: Export DATABASE_URL
+        run: echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> $GITHUB_ENV
 
-      - name: Process all new TCX files
+      - name: Process TCX files
         run: |
-          set -e
-          # pour chaque .tcx dans data/
+          set -euo pipefail
+          mkdir -p data/processed
           for f in data/*.tcx; do
-            if [ ! -f "$f" ]; then
-              echo "No TCX file found in data/; skipping."
+            [ -f "$f" ] || continue
+            base=$(basename "$f")
+            marker="data/processed/${base}.done"
+            if [ -f "$marker" ]; then
+              echo "✅ $base already processed"
               continue
             fi
-            echo "=== Processing $f ==="
 
-            # lancer le parser ; il doit écrire le session ID dans .last_session
-            python src/ingest/parser.py --input "$f" | tee parser_output.log
-
-            # récupération du session ID : on suppose que parser.py écrit le UUID sur la dernière ligne
-            # sinon adapte parser.py pour l'écrire explicitement dans .last_session
-            SESSION_ID=$(tail -n 1 parser_output.log | grep -Eo '[0-9a-fA-F-]{36}' || true)
-            if [ -z "$SESSION_ID" ]; then
-              echo "Could not extract session ID for $f; check parser output."
-              cat parser_output.log
+            echo "➤ Processing $base"
+            out=$(python src/ingest/parser.py --input "$f")
+            echo "$out"
+            sid=$(echo "$out" | grep -Po '(?<="session_id": ")[^"]+')
+            if [ -z "$sid" ]; then
+              echo "❌ Could not extract session_id"
               exit 1
             fi
-            echo "Extracted session ID: $SESSION_ID"
+            echo "Session ID: $sid"
 
-            # lancer l'analyse sur cette session
-            python src/processing/analysis.py --session-id "$SESSION_ID"
+            python src/processing/analysis.py --session-id "$sid"
+
+            touch "$marker"
           done
