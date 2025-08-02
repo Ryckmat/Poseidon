@@ -1271,7 +1271,7 @@ def main():
                 "zone": "Z7",
                 "name": {"en": "Neuromuscular", "fr": "Neuromusculaire"},
                 "from": 94,
-                "to": 633,
+                "to": 250,
             },
         ]
         bins = [z["from"] for z in power_zone_defs] + [power_zone_defs[-1]["to"]]
