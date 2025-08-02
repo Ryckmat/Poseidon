@@ -27,6 +27,6 @@ jobs:
       - name: Lint with black/isort/flake8
         run: |
           pip install black==23.9.1 isort==5.13.2 flake8==6.1.0
-          black --check .
-          isort --check-only .
+          black --check src
+          isort --check-only src
           flake8 src

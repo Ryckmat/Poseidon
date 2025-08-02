@@ -37,6 +37,9 @@ jobs:
       - name: Install local package
         run: pip install -e .
 
+      - name: Install env
+        run: pip install -e .
+
       - name: Validate env secret
         run: |
           if [ -z "${{ secrets.DATABASE_URL }}" ]; then
@@ -78,9 +81,6 @@ jobs:
               continue
             fi
             echo "Extracted session ID: $SESSION_ID"
-
-            if ! python src/processing/analysis.py --session-id "$SESSION_ID"; then
-              echo "[ERROR] analysis.py failed for session $SESSION_ID (file: $f)"
-              continue
-            fi
+            # lancer l'analyse sur cette session
+            python src/processing/analysis.py --session-id $SESSION_ID
           done

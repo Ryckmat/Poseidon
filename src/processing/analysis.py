@@ -1,13 +1,15 @@
 # src/processing/analysis.py
 import argparse
 import os
+
 import numpy as np
 from dotenv import load_dotenv
 from sqlalchemy import select
+
 from db.models import Regression, Session, SessionLocal, StableSegment, Trackpoint
-import datetime
 
 load_dotenv()
+
 
 def run_analysis(session_id):
     db = SessionLocal()
@@ -32,11 +34,7 @@ def run_analysis(session_id):
             return
 
         # Build arrays
-        # Correction: remove tzinfo from datetime before converting to np.datetime64
-        times = np.array([
-            tp.time.replace(tzinfo=None) if tp.time.tzinfo else tp.time for tp in tps
-        ], dtype="datetime64[ns]")
-
+        times = np.array([tp.time for tp in tps], dtype="datetime64[ns]")
         distances = np.array([float(tp.distance_m or 0) for tp in tps])
         altitudes = np.array([float(tp.altitude_m or 0) for tp in tps])
         power = np.array(
@@ -62,8 +60,11 @@ def run_analysis(session_id):
         speed_kmh = speed_m_s * 3.6
 
         # Correction division by zero warning (ensure speed_m_s > 0 and not nan)
-        pace = np.where((speed_m_s > 1e-6) & (~np.isnan(speed_m_s)),
-                        (1 / speed_m_s) / 60 * 1000, np.nan)
+        pace = np.where(
+            (speed_m_s > 1e-6) & (~np.isnan(speed_m_s)),
+            (1 / speed_m_s) / 60 * 1000,
+            np.nan,
+        )
 
         # Elevation diff
         elev_diff = np.diff(altitudes)
