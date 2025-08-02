@@ -1,18 +1,20 @@
+# src/ingest/parser.py
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session as OrmSession
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from db.models import RawFile
 from db.models import Session as SessionModel
 from db.models import SessionLocal, Trackpoint
 
 
-def parse_tcx_and_store(input_path: str, force_new: bool = False):
+def parse_tcx_and_store(input_path: str):
     input_path = Path(input_path)
-    db: OrmSession = SessionLocal()
+    db: Session = SessionLocal()
     try:
         tree = ET.parse(input_path)
         root = tree.getroot()
@@ -20,108 +22,90 @@ def parse_tcx_and_store(input_path: str, force_new: bool = False):
         print(f"[ERROR] Failed to parse XML from {input_path}: {e}")
         raise
 
-    # === RawFile upsert ===
+    # Vérifie si raw_file existe déjà
     try:
-        existing_raw = db.execute(
-            select(RawFile).where(RawFile.filename == input_path.name)
-        ).scalar_one_or_none()
-
-        if existing_raw and not force_new:
-            raw_file = existing_raw
-            print(
-                f"[INFO] RawFile '{input_path.name}' already exists (id={raw_file.id})"
-            )
-        else:
-            raw_file = RawFile(filename=input_path.name)
-            db.add(raw_file)
-            db.commit()
-            db.refresh(raw_file)
-            print(f"[INFO] Created RawFile '{input_path.name}' (id={raw_file.id})")
-    except Exception as e:
-        print(f"[ERROR] Failed to insert or retrieve RawFile: {e}")
+        existing_raw = (
+            db.execute(select(RawFile).where(RawFile.filename == input_path.name))
+            .scalars()
+            .first()
+        )
+    except SQLAlchemyError as e:
+        print(f"[ERROR] DB lookup RawFile failed: {e}")
         db.rollback()
+        db.close()
         raise
 
-    # === Session selection / creation ===
-    session_obj = None
-    if not force_new:
-        existing_sessions = (
-            db.execute(
-                select(SessionModel)
-                .where(SessionModel.raw_file_id == raw_file.id)
-                .order_by(SessionModel.start_time.desc())
-            )
-            .scalars()
-            .all()
+    if existing_raw:
+        print(
+            f"[INFO] RawFile '{input_path.name}' already exists (id={existing_raw.id})"
         )
-        if existing_sessions:
-            session_obj = existing_sessions[0]
-            print(
-                f"[INFO] Found existing session (id={session_obj.id}) for file {input_path.name}"
-            )
+        # voir si une session liée existe
+        existing_session = None
+        try:
+            # prend la première session associée
+            if existing_raw.sessions:
+                existing_session = existing_raw.sessions[0]
+        except Exception:
+            pass
 
-    if session_obj is None:
-        # Extract minimal start/end from trackpoints
-        start_time = None
-        end_time = None
-        times = []
-        for tp in root.findall(".//Trackpoint"):
-            time_el = tp.find("Time")
-            if time_el is not None and time_el.text:
-                try:
-                    t = datetime.fromisoformat(time_el.text.replace("Z", "+00:00"))
-                    times.append(t)
-                except Exception:
-                    continue
-        if times:
-            start_time = min(times)
-            end_time = max(times)
-        session_obj = SessionModel(
-            raw_file_id=raw_file.id,
-            start_time=start_time,
-            end_time=end_time,
-            duration_s=(
-                (end_time - start_time).total_seconds()
-                if start_time and end_time
-                else None
-            ),
-            distance_km=None,
-            elevation_gain_m=None,
-            avg_heart_rate=None,
-            avg_speed_kmh=None,
-        )
+        if existing_session:
+            print(
+                f"[INFO] Found existing session (id={existing_session.id}) for file {input_path.name}"
+            )
+            print(f"ALREADY_PROCESSED {existing_session.id}")
+            db.close()
+            return existing_session.id
+        # sinon on continue et créer nouvelle session
+
+    # Création du RawFile
+    try:
+        new_raw = RawFile(filename=input_path.name)
+        db.add(new_raw)
+        db.commit()
+        db.refresh(new_raw)
+        print(f"[INFO] Created RawFile '{input_path.name}' (id={new_raw.id})")
+    except Exception as e:
+        print(f"[ERROR] Failed to insert RawFile: {e}")
+        db.rollback()
+        db.close()
+        raise
+
+    # Exemple d'extraction d'altitudes (non critique)
+    altitudes = []
+    for tp in root.findall(".//Trackpoint"):
+        ele = tp.find("AltitudeMeters")
+        if ele is not None and ele.text:
+            try:
+                altitudes.append(float(ele.text))
+            except ValueError:
+                continue
+    if altitudes:
+        avg_altitude = sum(altitudes) / len(altitudes)
+        print(f"[INFO] Average altitude: {avg_altitude:.2f} meters")
+
+    # Création de la session associée
+    try:
+        session_obj = SessionModel(raw_file_id=new_raw.id)
         db.add(session_obj)
         db.commit()
         db.refresh(session_obj)
         print(
             f"[INFO] Created new session (id={session_obj.id}) for file {input_path.name}"
         )
-
-    # === Early exit if already ingéré ===
-    has_trackpoints = db.execute(
-        select(func.count(Trackpoint.id)).where(Trackpoint.session_id == session_obj.id)
-    ).scalar_one()
-    if has_trackpoints and not force_new:
-        print(f"ALREADY_PROCESSED {session_obj.id}")
+    except Exception as e:
+        print(f"[ERROR] Failed to create Session: {e}")
+        db.rollback()
         db.close()
-        return str(session_obj.id)
+        raise
 
-    # === (Re)ingest trackpoints ===
+    # Ingestion des trackpoints
     try:
-        if force_new and has_trackpoints:
-            db.execute(
-                Trackpoint.__table__.delete().where(
-                    Trackpoint.session_id == session_obj.id
-                )
-            )
-            db.commit()
-
         for tp in root.findall(".//Trackpoint"):
             time_el = tp.find("Time")
             power_el = tp.find(".//Power")
             cadence_el = tp.find(".//Cadence")
             distance_el = tp.find(".//DistanceMeters")
-            altitude_el = tp.find("AltitudeMeters")
+            altitude_el = tp.find(".//AltitudeMeters")
 
             if time_el is None or time_el.text is None:
                 continue
@@ -167,8 +151,8 @@ def parse_tcx_and_store(input_path: str, force_new: bool = False):
     finally:
         db.close()
 
-    print(f"{session_obj.id}")
-    return str(session_obj.id)
+    print(session_obj.id)
+    return session_obj.id
 
 
 if __name__ == "__main__":
@@ -176,12 +160,5 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Parse TCX and ingest into DB")
     parser.add_argument("--input", required=True, help="Path to .tcx file")
-    parser.add_argument(
-        "--force-new", action="store_true", help="Force new session even if existing"
-    )
     args = parser.parse_args()
-    sid = parse_tcx_and_store(args.input, force_new=args.force_new)
-    # si c'était déjà ingéré, on a déjà imprimé ALREADY_PROCESSED en tête
-    # on réimprime pour que le workflow puisse capturer l'ID proprement
-    if not sid.startswith("ALREADY_PROCESSED"):
-        print(f"{sid}")
+    parse_tcx_and_store(args.input)

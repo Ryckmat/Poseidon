@@ -47,27 +47,21 @@ jobs:
         run: |
           echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> $GITHUB_ENV
 
+      
       - name: Process all new TCX files
         run: |
-          set -e
+          set -euo pipefail
           for f in data/*.tcx; do
             if [ ! -f "$f" ]; then
               echo "No TCX file found in data/; skipping."
               continue
             fi
             echo "=== Processing $f ==="
-            # Lance le parser
-            PARSER_OUTPUT=$(python -m ingest.parser --input "$f" 2>&1 || true)
-            echo "$PARSER_OUTPUT" | tee parser_output.log
 
-            if echo "$PARSER_OUTPUT" | grep -q "ALREADY_PROCESSED"; then
-              SESSION_ID=$(echo "$PARSER_OUTPUT" | grep "ALREADY_PROCESSED" | awk '{print $2}')
-              echo "Session $SESSION_ID already ingéré, skip analysis."
-              continue
-            fi
+            python src/ingest/parser.py --input "$f" | tee parser_output.log
 
-            # extraire le session_id créé
-            SESSION_ID=$(echo "$PARSER_OUTPUT" | grep -Eo '[0-9a-fA-F-]{36}')
+            # extraire le premier UUID valide (session) et le nettoyer
+            SESSION_ID=$(grep -Eo '[0-9a-fA-F-]{36}' parser_output.log | head -n1 | tr -d '\r\n')
             if [ -z "$SESSION_ID" ]; then
               echo "Could not extract session ID for $f; check parser output."
               cat parser_output.log
@@ -75,6 +69,7 @@ jobs:
             fi
             echo "Extracted session ID: $SESSION_ID"
 
-            # lancer l'analyse uniquement si nouvelle session
-            python -m processing.analysis --session-id "$SESSION_ID"
+            # lancer l'analyse sur cette session
+            python src/processing/analysis.py --session-id "$SESSION_ID"
           done
+
