@@ -2,7 +2,7 @@
 import io
 import os
 import sys
-
+import copy
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -701,7 +701,7 @@ def main():
             if sel != "None":
                 idx = seg_labels.index(sel)
                 seg = stable_segments[idx]
-                fig_zoom = fig_power.full_copy()
+                fig_zoom = copy.deepcopy(fig_power)
                 fig_zoom.update_xaxes(
                     range=[
                         seg["start_time"] - pd.Timedelta(seconds=10),
