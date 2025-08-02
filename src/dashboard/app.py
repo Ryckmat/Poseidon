@@ -1,9 +1,7 @@
-# src/dashboard/app.py
-
+import copy
 import io
 import os
 import sys
-import copy
 
 import numpy as np
 import pandas as pd
@@ -18,9 +16,7 @@ from sqlalchemy import select
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from db.models import Session, SessionLocal, Trackpoint
 
-# ----------- Utility: format seconds to hh:mm:ss -----------
 def format_seconds_to_hhmmss(seconds):
-    """Convert seconds to hh:mm:ss string (zero-padded)."""
     try:
         seconds = int(seconds)
     except Exception:
@@ -30,51 +26,31 @@ def format_seconds_to_hhmmss(seconds):
     s = int(seconds % 60)
     return f"{h:02}:{m:02}:{s:02}"
 
-# ----------- Power zones (cycling standards) -----------
 DEFAULT_ZONES = [0, 100, 150, 200, 250, 300, 400, 500, 9999]
 
 def compute_zones(power_series, zones=DEFAULT_ZONES):
-    """
-    Compute time spent in each power zone.
-    Each point is assumed to be ~1 second. Adjust if sampling rate differs.
-    Returns a DataFrame with zone label, time (s), and percentage.
-    """
     counts, _ = np.histogram(power_series.dropna(), bins=zones)
     times = counts
     total = times.sum()
     pct = times / total * 100 if total > 0 else np.zeros_like(times)
-    # zone labels
     labels = [
-        f"{zones[i]}–{zones[i+1]-1}W" if zones[i+1] < 9999 else f"{zones[i]}+ W"
+        f"{zones[i]}–{zones[i+1]-1}W" if zones[i + 1] < 9999 else f"{zones[i]}+ W"
         for i in range(len(zones) - 1)
     ]
-    return pd.DataFrame({
-        "zone": labels,
-        "time_in_zone_s": times,
-        "percent_time_in_zone": pct
-    })
+    return pd.DataFrame(
+        {"zone": labels, "time_in_zone_s": times, "percent_time_in_zone": pct}
+    )
 
 def compute_cv(series):
-    """
-    Coefficient of variation (std/mean) for a pandas Series.
-    """
     vals = series.dropna()
     if len(vals) < 2:
         return np.nan
     return np.std(vals) / np.mean(vals) if np.mean(vals) != 0 else np.nan
 
 def moving_average(series, window_size_pts=60):
-    """
-    Simple moving average, window in number of points.
-    Default window is 60 points (~1min at 1Hz).
-    """
     return series.rolling(window=window_size_pts, min_periods=1, center=True).mean()
 
 def compare_stable_segments(primary, compare):
-    """
-    Compare primary and comparison stable segments, matched by duration (longest first).
-    Returns a DataFrame with average power, duration, and deltas.
-    """
     if not primary or not compare:
         return pd.DataFrame()
     primary_sorted = sorted(primary, key=lambda x: -x["duration_s"])
@@ -83,14 +59,16 @@ def compare_stable_segments(primary, compare):
     for i in range(min(len(primary_sorted), len(compare_sorted))):
         p = primary_sorted[i]
         c = compare_sorted[i]
-        rows.append({
-            "Primary avg power": p["avg_power"],
-            "Primary duration": p["duration_s"],
-            "Compare avg power": c["avg_power"],
-            "Compare duration": c["duration_s"],
-            "Delta power": p["avg_power"] - c["avg_power"],
-            "Delta duration": p["duration_s"] - c["duration_s"],
-        })
+        rows.append(
+            {
+                "Primary avg power": p["avg_power"],
+                "Primary duration": p["duration_s"],
+                "Compare avg power": c["avg_power"],
+                "Compare duration": c["duration_s"],
+                "Delta power": p["avg_power"] - c["avg_power"],
+                "Delta duration": p["duration_s"] - c["duration_s"],
+            }
+        )
     return pd.DataFrame(rows)
 # ----------- Internationalization (i18n) -----------
 LANGUAGES = {
@@ -156,6 +134,27 @@ LANGUAGES = {
         "compare_stable_segments": "Compare stable segments (top 3 by duration)",
         "full_export_csv": "Export all session data (CSV)",
         "full_export_pdf": "Export full PDF summary",
+        "advanced": "Advanced",
+        "Descriptive Statistics": "Descriptive Statistics",
+        "Mean": "Mean",
+        "Median": "Median",
+        "Min": "Min",
+        "Max": "Max",
+        "Std": "Std",
+        "Dispersion (Boxplots)": "Dispersion (Boxplots)",
+        "Time spent in Power & Cadence Zones": "Time spent in Power & Cadence Zones",
+        "Power zones (distribution):": "Power zones (distribution):",
+        "Cadence zones (distribution):": "Cadence zones (distribution):",
+        "Best average power (5s, 1min, 5min, 20min)": "Best average power (5s, 1min, 5min, 20min)",
+        "Cadence variability": "Cadence variability",
+        "Distribution across cadence zones above": "Distribution across cadence zones above",
+        "Compare Distributions": "Compare Distributions",
+        "Select a comparison session to show comparison histograms.": "Select a comparison session to show comparison histograms.",
+        "Longest streak above 200W": "Longest streak above 200W",
+        "Max streak: {duration} above {threshold}W": "Max streak: {duration} above {threshold}W",
+        "Power (W)": "Power (W)",
+        "Cadence (rpm)": "Cadence (rpm)",
+        "Speed (km/h)": "Speed (km/h)",
     },
     "fr": {
         "flag": "🇫🇷",
@@ -219,6 +218,27 @@ LANGUAGES = {
         "compare_stable_segments": "Comparatif des segments stables (top 3 par durée)",
         "full_export_csv": "Exporter toutes les données de séance (CSV)",
         "full_export_pdf": "Exporter le résumé PDF complet",
+        "advanced": "Avancé",
+        "Descriptive Statistics": "Statistiques descriptives",
+        "Mean": "Moyenne",
+        "Median": "Médiane",
+        "Min": "Min",
+        "Max": "Max",
+        "Std": "Écart-type",
+        "Dispersion (Boxplots)": "Dispersion (Boxplots)",
+        "Time spent in Power & Cadence Zones": "Temps passé par zone de Puissance & Cadence",
+        "Power zones (distribution):": "Zones de puissance (distribution):",
+        "Cadence zones (distribution):": "Zones de cadence (distribution):",
+        "Best average power (5s, 1min, 5min, 20min)": "Meilleurs efforts moyens (5s, 1min, 5min, 20min)",
+        "Cadence variability": "Variabilité cadence",
+        "Distribution across cadence zones above": "Distribution entre les zones de cadence ci-dessus",
+        "Compare Distributions": "Comparer les distributions",
+        "Select a comparison session to show comparison histograms.": "Sélectionnez une séance de comparaison pour voir les histogrammes.",
+        "Longest streak above 200W": "Plus longue séquence >200W",
+        "Max streak: {duration} above {threshold}W": "Séquence max : {duration} au-dessus de {threshold}W",
+        "Power (W)": "Puissance (W)",
+        "Cadence (rpm)": "Cadence (rpm)",
+        "Speed (km/h)": "Vitesse (km/h)",
     },
 }
 
@@ -270,11 +290,11 @@ def compute_derived_df(df_raw):
     df["time_diff_s"] = df["time"].diff().dt.total_seconds().fillna(0)
     df["delta_dist"] = df["distance_m"].diff().fillna(0)
     df["speed_m_s"] = np.where(
-        df["time_diff_s"] > 0, df["delta_dist"] / df["time_diff_s"], np.nan
+        df["time_diff_s"] > 0, df["delta_dist"] / df["time_diff_s"], np.nan,
     )
     df["speed_kmh"] = df["speed_m_s"] * 3.6
     df["pace_min_per_km"] = np.where(
-        df["speed_m_s"] > 0, (1 / df["speed_m_s"]) / 60 * 1000, np.nan
+        df["speed_m_s"] > 0, (1 / df["speed_m_s"]) / 60 * 1000, np.nan,
     )
     df["elevation_diff"] = df["altitude_m"].diff().fillna(0)
     return df
@@ -725,13 +745,16 @@ def main():
         )
     )
 
-    tab1, tab2, tab3 = st.tabs([
-        TRANSLATIONS["title"],
-        TRANSLATIONS["progression"],
-        TRANSLATIONS.get("advanced_tab", "Advanced analysis"),
-    ])
+    # -------------- TABS Streamlit --------------
+    tab1, tab2, tab3 = st.tabs(
+        [
+            TRANSLATIONS["title"],
+            TRANSLATIONS["progression"],
+            TRANSLATIONS["advanced"],
+        ]
+    )
 
-    # ----------- Classic tab: time series and stats -----------
+        # ----------- Classic tab: time series and stats ----------- 
     with tab1:
         st.markdown(f"## {TRANSLATIONS['time_series']}")
         max_elapsed = max(
@@ -740,11 +763,13 @@ def main():
         )
         tick_every = 300 if max_elapsed > 3600 else 60
         tickvals = np.arange(0, max_elapsed + tick_every, tick_every)
+
         def format_seconds_to_hhmmss(seconds):
             h = int(seconds // 3600)
             m = int((seconds % 3600) // 60)
             s = int(seconds % 60)
             return f"{h:02}:{m:02}:{s:02}"
+
         ticktext = [format_seconds_to_hhmmss(v) for v in tickvals]
 
         fig_power = go.Figure()
@@ -808,6 +833,7 @@ def main():
                 idx = seg_labels.index(sel)
                 seg = stable_segments[idx]
                 import copy
+
                 fig_zoom = copy.deepcopy(fig_power)
                 fig_zoom.update_xaxes(
                     range=[
@@ -994,7 +1020,6 @@ def main():
             )
             st.plotly_chart(fig_ps, use_container_width=True)
 
-
         # -- Export buttons --
         st.markdown(f"## {TRANSLATIONS['export']}")
         cleaned = df_primary[
@@ -1130,58 +1155,145 @@ def main():
 
     # ---------- Advanced tab: power zones, CV, stable segments comparatif, etc. ----------
     with tab3:
-        st.header(TRANSLATIONS.get("advanced_tab", "Advanced analysis"))
-        # Example: Power zones, coefficient of variation, etc.
-        st.markdown(f"### {TRANSLATIONS.get('zones', 'Power zones')}")
-        # Simple cycling power zones
-        if ftp_est and not np.isnan(ftp_est):
-            zones = [
-                (0.0, 0.55, "Z1", "Active Recovery"),
-                (0.55, 0.75, "Z2", "Endurance"),
-                (0.75, 0.90, "Z3", "Tempo"),
-                (0.90, 1.05, "Z4", "Threshold"),
-                (1.05, 1.20, "Z5", "VO2max"),
-                (1.20, 1.50, "Z6", "Anaerobic"),
-                (1.50, 10.0, "Z7", "Neuromuscular"),
-            ]
-            zone_df = pd.DataFrame([
-                {
-                    "Zone": z[2],
-                    "Name": z[3],
-                    "From": f"{int(z[0]*ftp_est)} W",
-                    "To": f"{int(z[1]*ftp_est)} W",
-                    "Time in zone": human_duration(
-                        ((df_primary["power_filtered"] >= z[0]*ftp_est) & (df_primary["power_filtered"] < z[1]*ftp_est)).sum() * median_dt
-                    ),
-                }
-                for z in zones
-            ])
-            st.dataframe(zone_df)
-        # CV (Coefficient of Variation)
-        st.markdown(f"### {TRANSLATIONS.get('cv', 'Coefficient of Variation (CV)')}")
-        if df_primary["power_filtered"].dropna().size > 2:
-            cv = df_primary["power_filtered"].std() / df_primary["power_filtered"].mean()
-            st.write(f"CV = {cv:.2%}")
+        st.header(TRANSLATIONS["advanced"])
 
-        # Compare top 3 stable segments between sessions if comparison loaded
-        if compare_session and stable_segments:
-            st.markdown(f"### {TRANSLATIONS.get('compare_stable_segments', 'Compare stable segments')}")
-            compare_stable = detect_stable_segments(
-                df_compare,
-                power_col="power_filtered",
-                std_col="power_std",
-                min_power=min_stable_power,
-                std_threshold=std_thresh,
-                min_duration_s=min_segment_duration,
-            ) if df_compare is not None else []
-            top_primary = sorted(stable_segments, key=lambda s: -s["duration_s"])[:3]
-            top_compare = sorted(compare_stable, key=lambda s: -s["duration_s"])[:3]
-            for idx, (s1, s2) in enumerate(zip(top_primary, top_compare)):
-                st.write(
-                    f"**#{idx+1}** | "
-                    f"Primary: {human_duration(s1['duration_s'])} @ {s1['avg_power']:.0f}W — "
-                    f"Compare: {human_duration(s2['duration_s'])} @ {s2['avg_power']:.0f}W"
-                )
+        # ---------- 1. Statistiques descriptives -------------
+        st.subheader(TRANSLATIONS["Descriptive Statistics"])
+        cols_stats = ["power_filtered", "cadence", "speed_kmh"]
+        labels_stats = {
+            "power_filtered": TRANSLATIONS["Power (W)"],
+            "cadence": TRANSLATIONS["Cadence (rpm)"],
+            "speed_kmh": TRANSLATIONS["Speed (km/h)"],
+        }
+        stats_table = pd.DataFrame({
+            TRANSLATIONS["Mean"]: [df_primary[c].mean() for c in cols_stats],
+            TRANSLATIONS["Median"]: [df_primary[c].median() for c in cols_stats],
+            TRANSLATIONS["Min"]: [df_primary[c].min() for c in cols_stats],
+            TRANSLATIONS["Max"]: [df_primary[c].max() for c in cols_stats],
+            TRANSLATIONS["Std"]: [df_primary[c].std() for c in cols_stats],
+        }, index=[labels_stats[c] for c in cols_stats])
+        st.dataframe(stats_table.style.format("{:.2f}"))
+
+        # ---------- 2. Dispersion (boxplots) -------------------
+        st.subheader(TRANSLATIONS["Dispersion (Boxplots)"])
+        box_col1, box_col2, box_col3 = st.columns(3)
+        with box_col1:
+            st.plotly_chart(px.box(df_primary, y="power_filtered", points="outliers",
+                                title=TRANSLATIONS["Power (W)"]), use_container_width=True)
+        with box_col2:
+            st.plotly_chart(px.box(df_primary, y="cadence", points="outliers",
+                                title=TRANSLATIONS["Cadence (rpm)"]), use_container_width=True)
+        with box_col3:
+            st.plotly_chart(px.box(df_primary, y="speed_kmh", points="outliers",
+                                title=TRANSLATIONS["Speed (km/h)"]), use_container_width=True)
+
+        # ---------- 3. Power zones (TABLEAU DETALILLE) ---------
+        st.subheader("Power zones")
+
+        power_zone_defs = [
+            {"zone": "Z1", "name": {"en": "Active Recovery", "fr": "Récup. active"}, "from": 0, "to": 34},
+            {"zone": "Z2", "name": {"en": "Endurance", "fr": "Endurance"}, "from": 34, "to": 47},
+            {"zone": "Z3", "name": {"en": "Tempo", "fr": "Tempo"}, "from": 47, "to": 56},
+            {"zone": "Z4", "name": {"en": "Threshold", "fr": "Seuil"}, "from": 56, "to": 66},
+            {"zone": "Z5", "name": {"en": "VO2max", "fr": "VO2max"}, "from": 66, "to": 75},
+            {"zone": "Z6", "name": {"en": "Anaerobic", "fr": "Anaérobie"}, "from": 75, "to": 94},
+            {"zone": "Z7", "name": {"en": "Neuromuscular", "fr": "Neuromusculaire"}, "from": 94, "to": 633},
+        ]
+        bins = [z["from"] for z in power_zone_defs] + [power_zone_defs[-1]["to"]]
+        labels = [z["zone"] for z in power_zone_defs]
+        df_primary["custom_power_zone"] = pd.cut(df_primary["power_filtered"], bins=bins, labels=labels, right=False)
+
+        dt_median = np.median(np.diff(df_primary["elapsed_time_s"].dropna()))
+        zone_summary = []
+        for z in power_zone_defs:
+            count = (df_primary["custom_power_zone"] == z["zone"]).sum()
+            seconds = int(count * dt_median)
+            minutes = seconds // 60
+            sec = seconds % 60
+            t_human = f"{minutes}m {sec}s" if minutes else f"{sec}s"
+            zone_summary.append({
+                "Zone": z["zone"],
+                "Name": z["name"][st.session_state.lang],
+                "From": f"{z['from']} W",
+                "To": f"{z['to']} W",
+                "Time in zone": t_human,
+            })
+        df_zone_table = pd.DataFrame(zone_summary)
+        st.dataframe(df_zone_table)
+
+        # ---------- 4. Meilleurs efforts rolling 5s, 1min, 5min, 20min ----------
+        st.subheader({
+            "en": "Best average power (5s, 1min, 5min, 20min)",
+            "fr": "Meilleurs efforts moyens (5s, 1min, 5min, 20min)"
+        }[st.session_state.lang])
+        def best_effort(series, elapsed_s, win_sec):
+            dt = np.median(np.diff(elapsed_s))
+            win_pts = max(1, int(round(win_sec / dt))) if dt > 0 else 1
+            return pd.Series(series).rolling(win_pts, min_periods=1).mean().max()
+        best5s = best_effort(df_primary["power_filtered"].values, df_primary["elapsed_time_s"].values, 5)
+        best1m = best_effort(df_primary["power_filtered"].values, df_primary["elapsed_time_s"].values, 60)
+        best5m = best_effort(df_primary["power_filtered"].values, df_primary["elapsed_time_s"].values, 300)
+        best20m = best_effort(df_primary["power_filtered"].values, df_primary["elapsed_time_s"].values, 1200)
+        st.markdown(f"5s: {best5s:.0f}W, 1min: {best1m:.0f}W, 5min: {best5m:.0f}W, 20min: {best20m:.0f}W")
+        best_avg_df = pd.DataFrame({
+            "Interval": ["5s", "1min", "5min", "20min"],
+            "Best Power (W)": [best5s, best1m, best5m, best20m]
+        })
+
+        st.plotly_chart(
+            px.bar(
+                best_avg_df, 
+                x="Interval", 
+                y="Best Power (W)",
+                text="Best Power (W)",
+                title="Best average power over key intervals",
+                labels={"Interval": "Interval", "Best Power (W)": "Best Power (W)"},
+            ).update_traces(texttemplate='%{text:.0f}W', textposition='outside'),
+            use_container_width=True
+        )
+
+        # ---------- 5. Variabilité cadence -----------------
+        st.subheader({
+            "en": "Cadence variability",
+            "fr": "Variabilité cadence"
+        }[st.session_state.lang])
+        mean_cad = df_primary["cadence"].mean()
+        std_cad = df_primary["cadence"].std()
+        st.write({
+            "en": f"Mean: {mean_cad:.1f} rpm, Std: {std_cad:.1f} rpm",
+            "fr": f"Moyenne: {mean_cad:.1f} rpm, Écart-type: {std_cad:.1f} rpm"
+        }[st.session_state.lang])
+
+        # ---------- 6. Longest streak above power threshold ----------
+        st.subheader({
+            "en": "Longest streak between 100W and 250W",
+            "fr": "Plus longue séquence entre 100W et 250W"
+        }[st.session_state.lang])
+        min_power_thr = 100
+        max_power_thr = 250
+        mask = (df_primary["power_filtered"] >= min_power_thr) & (df_primary["power_filtered"] < max_power_thr)
+        max_len = 0
+        current_len = 0
+        for v in mask.values:
+            if v:
+                current_len += 1
+                max_len = max(max_len, current_len)
+            else:
+                current_len = 0
+        streak_s = max_len * np.median(np.diff(df_primary["elapsed_time_s"].values))
+
+        def format_seconds_to_hhmmss(seconds):
+            h = int(seconds // 3600)
+            m = int((seconds % 3600) // 60)
+            s = int(seconds % 60)
+            return f"{h:02}:{m:02}:{s:02}"
+
+        st.write({
+            "en": f"Max streak: {format_seconds_to_hhmmss(streak_s)} between {min_power_thr}W and {max_power_thr}W",
+            "fr": f"Séquence max : {format_seconds_to_hhmmss(streak_s)} entre {min_power_thr}W et {max_power_thr}W"
+        }[st.session_state.lang])
+
+
 
 def make_pdf(
     primary_session,
@@ -1201,9 +1313,10 @@ def make_pdf(
     advanced=False,
 ):
     import io
-    from fpdf import FPDF
-    import plotly.io as pio
+
     import numpy as np
+    import plotly.io as pio
+    from fpdf import FPDF
 
     def sanitize_text(s: str) -> str:
         if not isinstance(s, str):
@@ -1302,11 +1415,13 @@ def make_pdf(
             )
         max_elapsed = df_primary["elapsed_time_s"].max()
         tick_every = 300 if max_elapsed > 3600 else 60
+
         def format_seconds_to_hhmmss(seconds):
             h = int(seconds // 3600)
             m = int((seconds % 3600) // 60)
             s = int(seconds % 60)
             return f"{h:02}:{m:02}:{s:02}"
+
         tickvals = np.arange(0, max_elapsed + tick_every, tick_every)
         ticktext = [format_seconds_to_hhmmss(v) for v in tickvals]
         fig_power.update_layout(
