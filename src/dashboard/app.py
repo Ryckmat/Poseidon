@@ -3,6 +3,7 @@ import io
 import os
 import sys
 import copy
+
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -15,6 +16,13 @@ from sqlalchemy import select
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from db.models import Session, SessionLocal, Trackpoint
+
+# ----------- Utilitaire format hh:mm:ss -----------
+def format_seconds_to_hhmmss(seconds):
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    return f"{h:02}:{m:02}:{s:02}"
 
 # detect kaleido availability
 try:
@@ -147,8 +155,6 @@ LANGUAGES = {
     },
 }
 
-
-# ---- utility functions ----
 def to_number(x):
     if x is None:
         return None
@@ -157,13 +163,11 @@ def to_number(x):
     except (ValueError, TypeError):
         return None
 
-
 def metric_value(val, fmt="{:.2f}", fallback="—"):
     num = to_number(val)
     if num is None or (isinstance(num, float) and (np.isnan(num) or np.isinf(num))):
         return fallback
     return fmt.format(num)
-
 
 def human_duration(sec):
     if sec is None:
@@ -185,11 +189,11 @@ def human_duration(sec):
     parts.append(f"{secs}s")
     return " ".join(parts)
 
-
 def compute_derived_df(df_raw):
     df = df_raw.copy()
     df = df.sort_values("time").reset_index(drop=True)
     df["time"] = pd.to_datetime(df["time"])
+    df["elapsed_time_s"] = (df["time"] - df["time"].iloc[0]).dt.total_seconds()
     df["time_diff_s"] = df["time"].diff().dt.total_seconds().fillna(0)
     df["delta_dist"] = df["distance_m"].diff().fillna(0)
     df["speed_m_s"] = np.where(
@@ -202,10 +206,8 @@ def compute_derived_df(df_raw):
     df["elevation_diff"] = df["altitude_m"].diff().fillna(0)
     return df
 
-
 def rolling_std(arr, window_pts):
     return pd.Series(arr).rolling(window=window_pts, min_periods=1).std().to_numpy()
-
 
 def detect_stable_segments(
     df,
@@ -240,6 +242,8 @@ def detect_stable_segments(
         end = seg["end"]
         start_time = df.loc[start, "time"]
         end_time = df.loc[end, "time"]
+        start_elapsed = df.loc[start, "elapsed_time_s"]
+        end_elapsed = df.loc[end, "elapsed_time_s"]
         duration = (end_time - start_time).total_seconds()
         if duration >= min_duration_s:
             seg_df = df.loc[start : end + 1]
@@ -249,6 +253,8 @@ def detect_stable_segments(
                     "end_idx": end,
                     "start_time": start_time,
                     "end_time": end_time,
+                    "elapsed_time_s_start": start_elapsed,
+                    "elapsed_time_s_end": end_elapsed,
                     "duration_s": duration,
                     "avg_power": np.nanmean(seg_df[power_col]),
                     "std_power": np.nanstd(seg_df[power_col]),
@@ -259,9 +265,7 @@ def detect_stable_segments(
             )
     return final
 
-
 def regression_with_ci(x, y, n_boot=200, ci=0.95):
-    # Correction : Cast to float ndarray to avoid TypeError with np.isnan
     x = np.array(x, dtype=float)
     y = np.array(y, dtype=float)
     mask = (~np.isnan(x)) & (~np.isnan(y))
@@ -314,7 +318,6 @@ def regression_with_ci(x, y, n_boot=200, ci=0.95):
         "r2_bootstrap_mean": r2_mean,
     }
 
-
 @st.cache_data(ttl=300)
 def load_sessions():
     db = SessionLocal()
@@ -326,7 +329,6 @@ def load_sessions():
         )
     finally:
         db.close()
-
 
 @st.cache_data(ttl=300)
 def load_trackpoints(session_id):
@@ -343,7 +345,6 @@ def load_trackpoints(session_id):
         )
     finally:
         db.close()
-
 
 def build_df_from_trackpoints(tps):
     return pd.DataFrame(
@@ -362,19 +363,14 @@ def build_df_from_trackpoints(tps):
         ]
     )
 
-
-# presets
 if "presets" not in st.session_state:
     st.session_state.presets = {}
-
 
 def save_preset(name, params):
     st.session_state.presets[name] = params
 
-
 def load_preset(name):
     return st.session_state.presets.get(name, {})
-
 
 def sanitize_text(s: str) -> str:
     if not isinstance(s, str):
@@ -392,11 +388,8 @@ def sanitize_text(s: str) -> str:
         s = s.replace(k, v)
     return s
 
-
-# main
 def main():
     global TRANSLATIONS
-    # kaleido warning
     if not HAVE_KALEIDO:
         st.warning(
             "kaleido not installed: PDF export charts may fail. Install with `pip install -U kaleido`."
@@ -645,10 +638,11 @@ def main():
 
     with tab1:
         st.markdown(f"## {TRANSLATIONS['time_series']}")
+        # ---------  X AXIS in elapsed seconds, formatting ticks as hh:mm:ss -----------
         fig_power = go.Figure()
         fig_power.add_trace(
             go.Scatter(
-                x=df_primary["time"],
+                x=df_primary["elapsed_time_s"],
                 y=df_primary["power"],
                 name="Power raw",
                 mode="lines",
@@ -658,7 +652,7 @@ def main():
         )
         fig_power.add_trace(
             go.Scatter(
-                x=df_primary["time"],
+                x=df_primary["elapsed_time_s"],
                 y=df_primary["power_filtered"],
                 name="Power filtered",
                 mode="lines",
@@ -667,8 +661,8 @@ def main():
         )
         for seg in stable_segments:
             fig_power.add_vrect(
-                x0=seg["start_time"],
-                x1=seg["end_time"],
+                x0=seg["elapsed_time_s_start"],
+                x1=seg["elapsed_time_s_end"],
                 fillcolor="green",
                 opacity=0.15,
                 line_width=0,
@@ -678,17 +672,29 @@ def main():
         if df_compare is not None:
             fig_power.add_trace(
                 go.Scatter(
-                    x=df_compare["time"],
+                    x=df_compare["elapsed_time_s"],
                     y=df_compare["power_filtered"],
                     name="Compare power filtered",
                     mode="lines",
                     line=dict(color="orange", dash="dash"),
                 )
             )
+        # ---- AXE X HUMAIN -----
+        max_elapsed = max(
+            df_primary["elapsed_time_s"].max(),
+            df_compare["elapsed_time_s"].max() if df_compare is not None else 0,
+        )
+        tick_every = 300 if max_elapsed > 3600 else 60  # 5min ou 1min
+        tickvals = np.arange(0, max_elapsed + tick_every, tick_every)
+        ticktext = [format_seconds_to_hhmmss(v) for v in tickvals]
         fig_power.update_layout(
             title=TRANSLATIONS["power_over_time"],
-            xaxis_title="Time",
+            xaxis_title="Elapsed Time (hh:mm:ss)",
             yaxis_title="Power (W)",
+        )
+        fig_power.update_xaxes(
+            tickvals=tickvals,
+            ticktext=ticktext,
         )
         st.plotly_chart(fig_power, use_container_width=True)
 
@@ -704,10 +710,16 @@ def main():
                 fig_zoom = copy.deepcopy(fig_power)
                 fig_zoom.update_xaxes(
                     range=[
-                        seg["start_time"] - pd.Timedelta(seconds=10),
-                        seg["end_time"] + pd.Timedelta(seconds=10),
+                        seg["elapsed_time_s_start"] - 10,
+                        seg["elapsed_time_s_end"] + 10,
                     ]
                 )
+                zoom_min = max(seg["elapsed_time_s_start"] - 10, 0)
+                zoom_max = seg["elapsed_time_s_end"] + 10
+                tick_every = 60 if (zoom_max - zoom_min) < 3600 else 300
+                tickvals_zoom = np.arange(zoom_min, zoom_max + tick_every, tick_every)
+                ticktext_zoom = [format_seconds_to_hhmmss(v) for v in tickvals_zoom]
+                fig_zoom.update_xaxes(tickvals=tickvals_zoom, ticktext=ticktext_zoom)
                 st.plotly_chart(fig_zoom, use_container_width=True)
 
         cad_speed_col1, cad_speed_col2 = st.columns(2)
@@ -715,7 +727,7 @@ def main():
             fig_cad = go.Figure()
             fig_cad.add_trace(
                 go.Line(
-                    x=df_primary["time"],
+                    x=df_primary["elapsed_time_s"],
                     y=df_primary["cadence"],
                     name=TRANSLATIONS["cadence_over_time"],
                 )
@@ -723,23 +735,25 @@ def main():
             if df_compare is not None:
                 fig_cad.add_trace(
                     go.Line(
-                        x=df_compare["time"],
+                        x=df_compare["elapsed_time_s"],
                         y=df_compare["cadence"],
                         name=f"Compare {TRANSLATIONS['cadence_over_time']}",
                         line=dict(dash="dash", color="red"),
                     )
                 )
+            # Ticks pour l'axe X
             fig_cad.update_layout(
                 title=TRANSLATIONS["cadence_over_time"],
-                xaxis_title="Time",
+                xaxis_title="Elapsed Time (hh:mm:ss)",
                 yaxis_title="Cadence (rpm)",
             )
+            fig_cad.update_xaxes(tickvals=tickvals, ticktext=ticktext)
             st.plotly_chart(fig_cad, use_container_width=True)
         with cad_speed_col2:
             fig_spd = go.Figure()
             fig_spd.add_trace(
                 go.Line(
-                    x=df_primary["time"],
+                    x=df_primary["elapsed_time_s"],
                     y=df_primary["speed_kmh"],
                     name=TRANSLATIONS["speed_over_time"],
                 )
@@ -747,7 +761,7 @@ def main():
             if df_compare is not None:
                 fig_spd.add_trace(
                     go.Line(
-                        x=df_compare["time"],
+                        x=df_compare["elapsed_time_s"],
                         y=df_compare["speed_kmh"],
                         name=f"Compare {TRANSLATIONS['speed_over_time']}",
                         line=dict(dash="dash", color="red"),
@@ -755,9 +769,10 @@ def main():
                 )
             fig_spd.update_layout(
                 title=TRANSLATIONS["speed_over_time"],
-                xaxis_title="Time",
+                xaxis_title="Elapsed Time (hh:mm:ss)",
                 yaxis_title="Speed (km/h)",
             )
+            fig_spd.update_xaxes(tickvals=tickvals, ticktext=ticktext)
             st.plotly_chart(fig_spd, use_container_width=True)
 
         st.markdown("### Distributions")
@@ -904,6 +919,7 @@ def main():
         cleaned = df_primary[
             [
                 "time",
+                "elapsed_time_s",
                 "power",
                 "power_filtered",
                 "cadence",
@@ -1038,7 +1054,6 @@ def main():
             st.plotly_chart(fig_np, use_container_width=True)
             st.plotly_chart(fig_tss, use_container_width=True)
 
-
 def make_pdf(
     primary_session,
     df_primary,
@@ -1137,7 +1152,7 @@ def make_pdf(
         fig_power = go.Figure()
         fig_power.add_trace(
             go.Scatter(
-                x=df_primary["time"],
+                x=df_primary["elapsed_time_s"],
                 y=df_primary["power_filtered"],
                 name="Power filtered",
                 mode="lines",
@@ -1145,16 +1160,24 @@ def make_pdf(
         )
         for seg in stable_segments:
             fig_power.add_vrect(
-                x0=seg["start_time"],
-                x1=seg["end_time"],
+                x0=seg["elapsed_time_s_start"],
+                x1=seg["elapsed_time_s_end"],
                 fillcolor="green",
                 opacity=0.15,
                 line_width=0,
             )
+        max_elapsed = df_primary["elapsed_time_s"].max()
+        tick_every = 300 if max_elapsed > 3600 else 60
+        tickvals = np.arange(0, max_elapsed + tick_every, tick_every)
+        ticktext = [format_seconds_to_hhmmss(v) for v in tickvals]
         fig_power.update_layout(
             title=TRANSLATIONS["power_over_time"],
-            xaxis_title="Time",
+            xaxis_title="Elapsed Time (hh:mm:ss)",
             yaxis_title="Power (W)",
+        )
+        fig_power.update_xaxes(
+            tickvals=tickvals,
+            ticktext=ticktext,
         )
         img_power = pio.to_image(fig_power, format="png", width=700, height=300)
         pdf.image(io.BytesIO(img_power), x=10, w=190)
@@ -1178,9 +1201,7 @@ def make_pdf(
             line = f"- {human_duration(s['duration_s'])} @ {s['avg_power']:.1f}W (std {s['std_power']:.1f})"
             pdf.cell(0, 5, sanitize_text(line), ln=True)
 
-    # encode with replace to avoid UnicodeEncodeError
     return pdf.output(dest="S").encode("latin1", errors="replace")
-
 
 if __name__ == "__main__":
     main()
