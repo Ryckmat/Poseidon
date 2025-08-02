@@ -1,13 +1,19 @@
+# src/ingest/parser.py
+import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
+import sys
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session as OrmSession
+from sqlalchemy import select
 
-from db.models import RawFile
-from db.models import Session as SessionModel
-from db.models import SessionLocal, Trackpoint
+from db.models import (
+    RawFile,
+    Session as SessionModel,
+    SessionLocal,
+    Trackpoint,
+)
 
 
 def to_float(text):
@@ -15,6 +21,33 @@ def to_float(text):
         return float(text)
     except Exception:
         return None
+
+
+def find_child(elem, name):
+    """Retourne le premier enfant quel que soit le namespace via local-name()."""
+    for child in elem:
+        if child.tag.endswith("}" + name) or child.tag == name or child.tag.split("}")[-1] == name:
+            return child
+    return None
+
+
+def find_descendants(elem, name):
+    """Itère sur tous les descendants avec matching local-name."""
+    for descendant in elem.iter():
+        if descendant.tag.endswith("}" + name) or descendant.tag == name or descendant.tag.split("}")[-1] == name:
+            yield descendant
+
+
+def get_text_by_path(parent, *names):
+    """Traverse une mini-arborescence avec local-name matching."""
+    cur = parent
+    for name in names:
+        if cur is None:
+            return None
+        cur = find_child(cur, name)
+    if cur is not None and cur.text:
+        return cur.text.strip()
+    return None
 
 
 def parse_tcx_and_store(input_path: str):
@@ -35,11 +68,9 @@ def parse_tcx_and_store(input_path: str):
 
     # Vérifier si RawFile existe déjà
     try:
-        existing_raw = (
-            db.execute(select(RawFile).where(RawFile.filename == input_path.name))
-            .scalars()
-            .first()
-        )
+        existing_raw = db.execute(
+            select(RawFile).where(RawFile.filename == input_path.name)
+        ).scalars().first()
     except Exception as e:
         print(f"[ERROR] DB lookup for RawFile failed: {e}")
         db.close()
@@ -49,7 +80,6 @@ def parse_tcx_and_store(input_path: str):
         print(
             f"[INFO] RawFile '{input_path.name}' already exists (id={existing_raw.id})"
         )
-        # Voir si une session déjà plantée / créée pour ce rawfile
         existing_session = (
             db.execute(
                 select(SessionModel).where(SessionModel.raw_file_id == existing_raw.id)
@@ -80,8 +110,8 @@ def parse_tcx_and_store(input_path: str):
             raise
         print(f"[INFO] Created RawFile '{input_path.name}' (id={raw_file.id})")
 
-    # Extraction des trackpoints
-    trackpoint_elements = root.findall(".//Trackpoint")
+    # Extraction des trackpoints (robuste au namespace)
+    trackpoint_elements = list(find_descendants(root, "Trackpoint"))
     print(
         f"[DEBUG] Found {len(trackpoint_elements)} Trackpoint elements in {input_path.name}"
     )
@@ -91,7 +121,7 @@ def parse_tcx_and_store(input_path: str):
         db.close()
         return None
 
-    # Pour déterminer start_time / end_time et distance et elevation gain
+    # Préparer les collections pour agrégats
     times = []
     distances = []
     altitudes = []
@@ -99,7 +129,7 @@ def parse_tcx_and_store(input_path: str):
     cadences = []
     powers = []
 
-    # Créer la session (temporaire) — on remplira plus tard
+    # Créer la session (vide pour l'instant)
     new_session = SessionModel(raw_file_id=raw_file.id)
     db.add(new_session)
     try:
@@ -112,78 +142,64 @@ def parse_tcx_and_store(input_path: str):
     session_id = new_session.id
     print(f"[INFO] Created new session (id={session_id}) for file {input_path.name}")
 
-    # Parcours trackpoints
+    # Parcours des trackpoints
     try:
         for tp in trackpoint_elements:
-            time_el = tp.find("Time")
-            if time_el is None or time_el.text is None:
+            time_text = get_text_by_path(tp, "Time")
+            if not time_text:
                 continue
             try:
-                timestamp = datetime.fromisoformat(time_el.text.replace("Z", "+00:00"))
+                timestamp = datetime.fromisoformat(
+                    time_text.replace("Z", "+00:00")
+                )
             except Exception:
                 continue
 
-            dist_el = tp.find("DistanceMeters")
-            altitude_el = tp.find("AltitudeMeters")
-            hr_el = tp.find(".//HeartRateBpm/Value")
-            cadence_el = tp.find("Cadence")
-            # Power souvent dans Extensions selon appareil; on essaie simple
-            power_el = tp.find(".//Power")
+            distance_m = to_float(get_text_by_path(tp, "DistanceMeters"))
+            altitude_m = to_float(get_text_by_path(tp, "AltitudeMeters"))
+            # HeartRateBpm/Value
+            hr_text = get_text_by_path(tp, "HeartRateBpm")
+            if hr_text is None:
+                hr_text = get_text_by_path(tp, "Value")  # fallback path if nested differently
+            # But often HeartRateBpm has child Value
+            hr_val = None
+            hr_value_node = find_child(find_child(tp, "HeartRateBpm") or tp, "Value")
+            if hr_value_node is not None and hr_value_node.text and hr_value_node.text.isdigit():
+                hr_val = int(hr_value_node.text)
+            cadence_val = None
+            cad_node = find_child(tp, "Cadence")
+            if cad_node is not None and cad_node.text and cad_node.text.isdigit():
+                cadence_val = int(cad_node.text)
+            power_val = to_float(get_text_by_path(tp, "Power"))
 
-            distance_m = (
-                to_float(dist_el.text) if dist_el is not None and dist_el.text else None
-            )
-            altitude_m = (
-                to_float(altitude_el.text)
-                if altitude_el is not None and altitude_el.text
-                else None
-            )
-            heart_rate = (
-                int(hr_el.text)
-                if hr_el is not None and hr_el.text and hr_el.text.isdigit()
-                else None
-            )
-            cadence = (
-                int(cadence_el.text)
-                if cadence_el is not None
-                and cadence_el.text
-                and cadence_el.text.isdigit()
-                else None
-            )
-            power = (
-                to_float(power_el.text)
-                if power_el is not None and power_el.text
-                else None
-            )
-
-            # Reconstruction prudente des autres champs (pace/speed) : laissés à l'analyse ultérieure
+            # Création du trackpoint
             trackpoint = Trackpoint(
                 session_id=session_id,
                 time=timestamp,
                 distance_m=distance_m,
                 altitude_m=altitude_m,
-                heart_rate=heart_rate,
-                cadence=cadence,
-                power=power,
-                power_filtered=power,  # initialement identique, les filtres viendront après
+                heart_rate=hr_val,
+                cadence=cadence_val,
+                power=power_val,
+                power_filtered=power_val,
                 speed_calc_kmh=None,
                 pace_min_per_km=None,
                 elevation_diff=None,
             )
             db.add(trackpoint)
 
-            # Collectes pour agrégats
+            # Collecte pour agrégats
             times.append(timestamp)
             if distance_m is not None:
                 distances.append(distance_m)
             if altitude_m is not None:
                 altitudes.append(altitude_m)
-            if heart_rate is not None:
-                heart_rates.append(heart_rate)
-            if cadence is not None:
-                cadences.append(cadence)
-            if power is not None:
-                powers.append(power)
+            if hr_val is not None:
+                heart_rates.append(hr_val)
+            if cadence_val is not None:
+                cadences.append(cadence_val)
+            if power_val is not None:
+                powers.append(power_val)
         db.commit()
     except Exception as e:
         print(f"[ERROR] Failed to ingest trackpoints: {e}")
@@ -191,22 +207,18 @@ def parse_tcx_and_store(input_path: str):
         db.close()
         raise
 
-    # Calculs sommaires de session
+    # Calculs sommaires de la session
     try:
-        # start / end
         start_time = min(times) if times else None
         end_time = max(times) if times else None
         duration_s = None
         if start_time and end_time:
             duration_s = (end_time - start_time).total_seconds()
 
-        # distance en km depuis dernier point (si progression)
         distance_km = None
         if distances:
-            # suppose que la distance est cumulative : on prend max
             distance_km = max(distances) / 1000.0
 
-        # elevation gain : somme des deltas positifs
         elevation_gain_m = None
         if altitudes:
             gain = 0.0
@@ -227,16 +239,12 @@ def parse_tcx_and_store(input_path: str):
         if heart_rates:
             avg_heart_rate = sum(heart_rates) / len(heart_rates)
 
-        # Mise à jour de la session
-        sess_obj = (
-            db.execute(select(SessionModel).where(SessionModel.id == session_id))
-            .scalars()
-            .first()
-        )
+        # Reload et mise à jour
+        sess_obj = db.execute(
+            select(SessionModel).where(SessionModel.id == session_id)
+        ).scalars().first()
         if not sess_obj:
-            print(
-                f"[ERROR] Could not reload session {session_id} to update aggregates."
-            )
+            print(f"[ERROR] Could not reload session {session_id} to update aggregates.")
         else:
             sess_obj.start_time = start_time
             sess_obj.end_time = end_time
@@ -245,13 +253,11 @@ def parse_tcx_and_store(input_path: str):
             sess_obj.elevation_gain_m = elevation_gain_m
             sess_obj.avg_heart_rate = avg_heart_rate
             sess_obj.avg_speed_kmh = avg_speed_kmh
-            # ftp_estimated / normalized_power / tss pourront être calculés ensuite
             db.add(sess_obj)
             db.commit()
     except Exception as e:
         print(f"[ERROR] Failed to update session aggregates: {e}")
         db.rollback()
-        # on ne raise pas forcément, on continue
 
     print(f"[INFO] Ingested trackpoints for session {session_id}")
     print(f"SESSION_ID:{session_id}")
