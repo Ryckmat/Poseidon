@@ -26,6 +26,7 @@ def run_analysis(session_id):
             return
 
         # Build arrays
+
         times = np.array([tp.time for tp in tps], dtype='datetime64[ns]')
         distances = np.array([float(tp.distance_m or 0) for tp in tps])
         altitudes = np.array([float(tp.altitude_m or 0) for tp in tps])
@@ -35,12 +36,16 @@ def run_analysis(session_id):
         # Compute time diffs in seconds
         time_diff_s = np.diff(times).astype('timedelta64[s]').astype(float)
         time_diff_s = np.insert(time_diff_s, 0, 0.0)
+
         # Speed m/s and km/h
         delta_dist = np.diff(distances)
         delta_dist = np.insert(delta_dist, 0, 0.0)
         speed_m_s = np.divide(delta_dist, time_diff_s, out=np.zeros_like(delta_dist), where=time_diff_s>0)
         speed_kmh = speed_m_s * 3.6
-        pace = np.where(speed_m_s > 0, (1 / speed_m_s) / 60 * 1000, np.nan)
+
+        # Correction division by zero warning (ensure speed_m_s > 0 and not nan)
+        pace = np.where((speed_m_s > 1e-6) & (~np.isnan(speed_m_s)),
+                        (1 / speed_m_s) / 60 * 1000, np.nan)
 
         # Elevation diff
         elev_diff = np.diff(altitudes)
@@ -120,6 +125,9 @@ def run_analysis(session_id):
 
         # Regression: power vs cadence
         def compute_reg(x, y, label):
+            # Correction: Cast x and y to float ndarray, ignore errors
+            x = np.array(x, dtype=float)
+            y = np.array(y, dtype=float)
             mask = (~np.isnan(x)) & (~np.isnan(y))
             if np.sum(mask) < 2:
                 return
