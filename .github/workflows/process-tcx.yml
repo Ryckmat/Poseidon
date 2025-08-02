@@ -27,14 +27,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml', '**/requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: Install package in editable mode
-        run: |
-          pip install --upgrade pip
-          pip install -e .  # installe le projet via pyproject.toml
+      - name: Install dependencies
+        run: pip install --upgrade pip && pip install -r requirements.txt
 
       - name: Validate env secret
         run: |
@@ -47,10 +45,9 @@ jobs:
         run: |
           echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> $GITHUB_ENV
 
-      
       - name: Process all new TCX files
         run: |
-          set -euo pipefail
+          set -e
           for f in data/*.tcx; do
             if [ ! -f "$f" ]; then
               echo "No TCX file found in data/; skipping."
@@ -58,13 +55,19 @@ jobs:
             fi
             echo "=== Processing $f ==="
 
-            python src/ingest/parser.py --input "$f" | tee parser_output.log
+            parser_output=$(python src/ingest/parser.py --input "$f" 2>&1)
+            echo "$parser_output" | tee parser_output.log
 
-            # extraire le premier UUID valide (session) et le nettoyer
-            SESSION_ID=$(grep -Eo '[0-9a-fA-F-]{36}' parser_output.log | head -n1 | tr -d '\r\n')
+            # extrait session ID fiable (que ce soit nouveau ou déjà existant)
+            SESSION_ID=$(echo "$parser_output" | grep -E '^SESSION_ID:' | head -n1 | cut -d':' -f2 | tr -d '\r\n')
             if [ -z "$SESSION_ID" ]; then
-              echo "Could not extract session ID for $f; check parser output."
-              cat parser_output.log
+              # fallback sur ALREADY_PROCESSED si jamais
+              SESSION_ID=$(echo "$parser_output" | grep -E '^ALREADY_PROCESSED' | head -n1 | awk '{print $2}' | tr -d '\r\n')
+            fi
+
+            if [ -z "$SESSION_ID" ]; then
+              echo "Could not extract session ID for $f; parser output:" >&2
+              echo "$parser_output" >&2
               exit 1
             fi
             echo "Extracted session ID: $SESSION_ID"
@@ -72,4 +75,3 @@ jobs:
             # lancer l'analyse sur cette session
             python src/processing/analysis.py --session-id "$SESSION_ID"
           done
-
