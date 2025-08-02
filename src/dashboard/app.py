@@ -261,6 +261,9 @@ def detect_stable_segments(
 
 
 def regression_with_ci(x, y, n_boot=200, ci=0.95):
+    # Correction : Cast to float ndarray to avoid TypeError with np.isnan
+    x = np.array(x, dtype=float)
+    y = np.array(y, dtype=float)
     mask = (~np.isnan(x)) & (~np.isnan(y))
     xs = x[mask]
     ys = y[mask]
@@ -310,6 +313,7 @@ def regression_with_ci(x, y, n_boot=200, ci=0.95):
         "intercept_ci": intercept_ci,
         "r2_bootstrap_mean": r2_mean,
     }
+
 
 
 @st.cache_data(ttl=300)
