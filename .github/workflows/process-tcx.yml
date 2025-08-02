@@ -47,31 +47,37 @@ jobs:
 
       - name: Process all new TCX files
         run: |
-          set -e
-          for f in data/*.tcx; do
-            if [ ! -f "$f" ]; then
-              echo "No TCX file found in data/; skipping."
+          set -euo pipefail
+          shopt -s globstar
+          for f in data/**/*.tcx; do
+            echo "=== Processing $f ==="
+            if [[ ! -f "$f" ]]; then
+              echo "No TCX file found at $f; skipping."
               continue
             fi
-            echo "=== Processing $f ==="
 
-            parser_output=$(python src/ingest/parser.py --input "$f" 2>&1)
+            parser_output=$(python src/ingest/parser.py --input "$f" 2>&1) || {
+              echo "[ERROR] parser.py failed for $f"
+              echo "$parser_output"
+              continue
+            }
             echo "$parser_output" | tee parser_output.log
 
-            # extrait session ID fiable (que ce soit nouveau ou déjà existant)
-            SESSION_ID=$(echo "$parser_output" | grep -E '^SESSION_ID:' | head -n1 | cut -d':' -f2 | tr -d '\r\n')
-            if [ -z "$SESSION_ID" ]; then
-              # fallback sur ALREADY_PROCESSED si jamais
-              SESSION_ID=$(echo "$parser_output" | grep -E '^ALREADY_PROCESSED' | head -n1 | awk '{print $2}' | tr -d '\r\n')
+            # Extraction du session ID (nouveau ou déjà existant)
+            SESSION_ID=$(printf '%s\n' "$parser_output" | grep -E '^SESSION_ID:' | head -n1 | cut -d':' -f2 | tr -d '\r\n')
+            if [[ -z "$SESSION_ID" ]]; then
+              SESSION_ID=$(printf '%s\n' "$parser_output" | grep -E '^ALREADY_PROCESSED' | head -n1 | awk '{print $2}' | tr -d '\r\n')
             fi
 
-            if [ -z "$SESSION_ID" ]; then
-              echo "Could not extract session ID for $f; parser output:" >&2
+            if [[ -z "$SESSION_ID" ]]; then
+              echo "[ERROR] Could not extract session ID for $f; parser output below:" >&2
               echo "$parser_output" >&2
-              exit 1
+              continue
             fi
             echo "Extracted session ID: $SESSION_ID"
 
-            # lancer l'analyse sur cette session
-            python src/processing/analysis.py --session-id "$SESSION_ID"
+            if ! python src/processing/analysis.py --session-id "$SESSION_ID"; then
+              echo "[ERROR] analysis.py failed for session $SESSION_ID (file: $f)"
+              continue
+            fi
           done
