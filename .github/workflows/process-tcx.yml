@@ -71,5 +71,5 @@ jobs:
             echo "Extracted session ID: $SESSION_ID"
 
             # lancer l'analyse sur cette session
-            python src/processing/analysis.py --session-id "$SESSION_ID"
+            python src/processing/analysis.py --session-id $SESSION_ID
           done
