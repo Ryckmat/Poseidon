@@ -315,7 +315,6 @@ def regression_with_ci(x, y, n_boot=200, ci=0.95):
     }
 
 
-
 @st.cache_data(ttl=300)
 def load_sessions():
     db = SessionLocal()

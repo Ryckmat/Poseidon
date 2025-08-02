@@ -60,8 +60,11 @@ def run_analysis(session_id):
         speed_kmh = speed_m_s * 3.6
 
         # Correction division by zero warning (ensure speed_m_s > 0 and not nan)
-        pace = np.where((speed_m_s > 1e-6) & (~np.isnan(speed_m_s)),
-                        (1 / speed_m_s) / 60 * 1000, np.nan)
+        pace = np.where(
+            (speed_m_s > 1e-6) & (~np.isnan(speed_m_s)),
+            (1 / speed_m_s) / 60 * 1000,
+            np.nan,
+        )
 
         # Elevation diff
         elev_diff = np.diff(altitudes)
