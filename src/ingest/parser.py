@@ -72,6 +72,10 @@ def ingest_file(tcx_path):
 
         # derive session-level bounds
         times = [p["time"] for p in points if p["time"] is not None]
+        if not times:
+            print("No valid timestamps found.")
+            return
+
         distances = [p["distance"] for p in points if p["distance"] is not None]
 
         start_time = min(times)
