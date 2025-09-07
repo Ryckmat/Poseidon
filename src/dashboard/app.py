@@ -1,4 +1,4 @@
-# poseidon_dashboard.py — version optimisée egress
+# poseidon_dashboard.py — version optimisée egress & pickle-safe
 
 import os
 import sys
@@ -9,7 +9,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from dotenv import load_dotenv
-from sqlalchemy import select, text  # CHANGED: add text for raw SQL
+from sqlalchemy import select, text  # raw SQL for downsampling
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from db.models import Session, SessionLocal, Trackpoint
@@ -209,7 +209,7 @@ LANGUAGES = {
         "tooltip_tss": "Score de charge d'entraînement approximatif",
         "select_segment": "Zoom sur segment",
         "self_compare_warning": "La séance de comparaison est la même que la principale ; ignorée.",
-        "progression": "Progression",
+        "progression": "Tendances hebdo",
         "weekly_trends": "Tendances hebdo",
         "training_load": "Charge d'entraînement (TSS)",
         "ftp_trend": "Tendance FTP",
@@ -426,32 +426,29 @@ def regression_with_ci(x, y, n_boot=200, ci=0.95):
     }
 
 
-# -------------------- Cached DB access (optimized) --------------------
-@st.cache_data(ttl=3600)  # CHANGED: longer cache
+# -------------------- Cached DB access (optimized & pickle-safe) --------------------
+@st.cache_data(ttl=3600)  # longer cache
 def load_sessions(max_rows=30):
-    """Return only the latest sessions (id, start_time)."""
+    """Return only the latest sessions as simple dicts (pickleable)."""
     db = SessionLocal()
     try:
-        # select only columns we need
         rows = (
-            db.execute(select(Session.id, Session.start_time).order_by(Session.start_time.desc()).limit(max_rows))
-            .all()
+            db.execute(
+                select(Session.id, Session.start_time)
+                .order_by(Session.start_time.desc())
+                .limit(max_rows)
+            ).all()
         )
-        # rebuild lightweight objects (id/start_time) so rest of code still works
-        class _S:  # tiny struct
-            __slots__ = ("id", "start_time")
-            def __init__(self, id, start_time):
-                self.id = id
-                self.start_time = start_time
-        return [_S(r[0], r[1]) for r in rows]
+        # return plain dicts (pickle-friendly)
+        return [{"id": r[0], "start_time": r[1]} for r in rows]
     finally:
         db.close()
 
 
-@st.cache_data(ttl=3600)  # CHANGED: longer cache
+@st.cache_data(ttl=3600)  # longer cache
 def load_trackpoints_downsampled(session_id, bucket_seconds=5):
     """
-    Downsample côté SQL via un bucket par secondes.
+    Downsample côté SQL via un bucket en secondes.
     Compatible Postgres: bucket = floor(epoch/time)/bucket * bucket, puis to_timestamp.
     On limite les colonnes à l'essentiel et on agrège.
     """
@@ -486,7 +483,7 @@ def load_trackpoints_downsampled(session_id, bucket_seconds=5):
                 "altitude_m",
             ],
         )
-        # Ensure numeric types
+        # ensure numeric
         for c in ["power", "power_filtered", "cadence", "speed_kmh", "distance_m", "altitude_m"]:
             if c in df:
                 df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -546,12 +543,12 @@ def main():
     st.sidebar.title(f"{TRANSLATIONS['flag']} {TRANSLATIONS['controls']}")
     st.title(f"{TRANSLATIONS['title']}")
 
-    sessions = load_sessions(max_rows=30)  # CHANGED: limit list
+    sessions = load_sessions(max_rows=30)  # limited list
     if not sessions:
         st.warning(TRANSLATIONS["no_sessions"])
         return
 
-    session_map = {f"{s.start_time} | {s.id}": s for s in sessions}
+    session_map = {f"{s['start_time']} | {s['id']}": s for s in sessions}
     keys = list(session_map.keys())
     primary_choice = st.sidebar.selectbox(
         TRANSLATIONS["primary_session"], keys, index=0
@@ -626,14 +623,14 @@ def main():
         st.experimental_rerun()
 
     primary_session = session_map[primary_choice]
-    # CHANGED: load downsampled trackpoints directly from SQL
-    df_primary_raw = load_trackpoints_downsampled(primary_session.id, bucket_seconds=bucket_seconds)
+    primary_session_id = primary_session["id"]
+    df_primary_raw = load_trackpoints_downsampled(primary_session_id, bucket_seconds=bucket_seconds)
     if df_primary_raw.empty:
         st.error(TRANSLATIONS["no_trackpoints"])
         return
     df_primary = compute_derived_df(df_primary_raw)
 
-    # Apply power filter (client-side) AFTER downsampling (lighter)
+    # Apply power filter (client-side) AFTER downsampling
     df_primary["power_filtered"] = np.where(
         (~df_primary["power"].isna()) & (df_primary["power"] <= max_power_threshold),
         df_primary["power"],
@@ -665,10 +662,12 @@ def main():
     df_compare = None
     reg_pc_comp = None
     reg_ps_comp = None
+    compare_session = None  # dict or None
     if compare_choice != "None" and compare_choice != primary_choice:
         compare_session = session_map.get(compare_choice)
         if compare_session:
-            df_compare_raw = load_trackpoints_downsampled(compare_session.id, bucket_seconds=bucket_seconds)
+            compare_session_id = compare_session["id"]
+            df_compare_raw = load_trackpoints_downsampled(compare_session_id, bucket_seconds=bucket_seconds)
             if not df_compare_raw.empty:
                 df_compare = compute_derived_df(df_compare_raw)
                 df_compare["power_filtered"] = np.where(
@@ -730,22 +729,18 @@ def main():
 
     ftp_est = estimate_ftp(df_primary["power_filtered"], df_primary["time"])
     npower = normalized_power(df_primary["power_filtered"], df_primary["time"])
-    # Try to get avg speed from session if available; otherwise compute
-    avg_speed_kmh = None
-    try:
-        avg_speed_kmh = to_number(primary_session.avg_speed_kmh)  # may not exist on lightweight struct
-    except Exception:
-        pass
-    if avg_speed_kmh is None or (isinstance(avg_speed_kmh, float) and np.isnan(avg_speed_kmh)):
-        if not df_primary["speed_kmh"].dropna().empty:
-            avg_speed_kmh = df_primary["speed_kmh"].dropna().mean()
+    # avg speed from df (robust if Session.avg_speed_kmh not selected)
+    if not df_primary["speed_kmh"].dropna().empty:
+        avg_speed_kmh = df_primary["speed_kmh"].dropna().mean()
+    else:
+        avg_speed_kmh = None
 
-    # duration from df (robust if Session.duration_s not selected)
+    # duration from df
     duration_s = float(df_primary["elapsed_time_s"].iloc[-1]) if len(df_primary) else None
     tss_val = compute_tss(npower, ftp_est, duration_s)
 
     # --- UI: summary metrics ---
-    st.subheader(f"{TRANSLATIONS['primary_session']}: {primary_session.id}")
+    st.subheader(f"{TRANSLATIONS['primary_session']}: {primary_session_id}")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric(TRANSLATIONS["duration"], human_duration(duration_s))
     col2.metric(
@@ -1070,7 +1065,7 @@ def main():
         st.download_button(
             TRANSLATIONS["cleaned_trackpoints"],
             data=csv_bytes,
-            file_name=f"session_{primary_session.id}_cleaned.csv",
+            file_name=f"session_{primary_session_id}_cleaned.csv",
             mime="text/csv",
         )
 
@@ -1078,18 +1073,18 @@ def main():
         st.download_button(
             TRANSLATIONS.get("full_export_csv", "Export all session data (CSV)"),
             data=df_primary.to_csv(index=False).encode("utf-8"),
-            file_name=f"session_{primary_session.id}_full.csv",
+            file_name=f"session_{primary_session_id}_full.csv",
             mime="text/csv",
         )
 
         if st.button(TRANSLATIONS["download_pdf"]):
             pdf_bytes = make_pdf(
-                primary_session,
+                primary_session_id,
                 df_primary,
                 stable_segments,
                 reg_pc,
                 reg_ps,
-                None if df_compare is None else compare_session,
+                compare_session,
                 df_compare,
                 reg_pc_comp,
                 reg_ps_comp,
@@ -1102,18 +1097,18 @@ def main():
             st.download_button(
                 "📄 PDF Report",
                 data=pdf_bytes,
-                file_name=f"session_{primary_session.id}_report.pdf",
+                file_name=f"session_{primary_session_id}_report.pdf",
                 mime="application/pdf",
             )
 
         if st.button(TRANSLATIONS.get("full_export_pdf", "Export full PDF summary")):
             pdf_bytes = make_pdf(
-                primary_session,
+                primary_session_id,
                 df_primary,
                 stable_segments,
                 reg_pc,
                 reg_ps,
-                None if df_compare is None else compare_session,
+                compare_session,
                 df_compare,
                 reg_pc_comp,
                 reg_ps_comp,
@@ -1127,7 +1122,7 @@ def main():
             st.download_button(
                 "📄 " + TRANSLATIONS.get("full_export_pdf", "Export full PDF summary"),
                 data=pdf_bytes,
-                file_name=f"session_{primary_session.id}_full_report.pdf",
+                file_name=f"session_{primary_session_id}_full_report.pdf",
                 mime="application/pdf",
             )
 
@@ -1138,7 +1133,7 @@ def main():
         if st.button("Calculer tendances (peut être long)"):
             all_records = []
             for s in sessions:
-                df = load_trackpoints_downsampled(s.id, bucket_seconds=bucket_seconds)
+                df = load_trackpoints_downsampled(s["id"], bucket_seconds=bucket_seconds)
                 if df.empty:
                     continue
                 df = compute_derived_df(df)
@@ -1151,15 +1146,15 @@ def main():
                 np_s = normalized_power(df["power_filtered"], df["time"])
                 duration_s_sess = float(df["elapsed_time_s"].iloc[-1]) if len(df) else None
                 tss_s = compute_tss(np_s, ftp_s, duration_s_sess)
-                week = pd.to_datetime(s.start_time).to_period("W").start_time
+                week = pd.to_datetime(s["start_time"]).to_period("W").start_time
                 all_records.append(
                     {
-                        "session_id": s.id,
+                        "session_id": s["id"],
                         "week": week,
                         "ftp": ftp_s,
                         "np": np_s,
                         "tss": tss_s,
-                        "date": s.start_time,
+                        "date": s["start_time"],
                     }
                 )
             if not all_records:
@@ -1364,12 +1359,12 @@ def main():
 
 
 def make_pdf(
-    primary_session,
+    primary_session_id,      # id simple
     df_primary,
     stable_segments,
     reg_pc,
     reg_ps,
-    compare_session,
+    compare_session,         # dict ou None (optionnel)
     df_compare,
     reg_pc_comp,
     reg_ps_comp,
@@ -1395,7 +1390,7 @@ def make_pdf(
     pdf.set_font("Arial", "B", 16)
     pdf.cell(0, 10, _sanitize(TRANSLATIONS["title"]), ln=True)
     pdf.set_font("Arial", size=10)
-    pdf.cell(0, 8, _sanitize(f"{TRANSLATIONS['primary_session']}: {primary_session.id}"), ln=True)
+    pdf.cell(0, 8, _sanitize(f"{TRANSLATIONS['primary_session']}: {primary_session_id}"), ln=True)
     pdf.ln(2)
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 6, "Key Metrics", ln=True)
