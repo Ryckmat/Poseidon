@@ -1,3 +1,5 @@
+# poseidon_dashboard.py — version optimisée egress
+
 import os
 import sys
 
@@ -7,12 +9,13 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from dotenv import load_dotenv
-from sqlalchemy import select
+from sqlalchemy import select, text  # CHANGED: add text for raw SQL
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from db.models import Session, SessionLocal, Trackpoint
 
 
+# -------------------- Utils --------------------
 def format_seconds_to_hhmmss(seconds):
     try:
         seconds = int(seconds)
@@ -74,7 +77,7 @@ def compare_stable_segments(primary, compare):
     return pd.DataFrame(rows)
 
 
-# ----------- Internationalization (i18n) -----------
+# -------------------- i18n --------------------
 LANGUAGES = {
     "en": {
         "flag": "🇬🇧",
@@ -246,11 +249,9 @@ LANGUAGES = {
     },
 }
 
-# ----------- Utility functions for data conversion -----------
 
-
+# -------------------- Conversion helpers --------------------
 def to_number(x):
-    """Convert to float or return None if conversion fails."""
     if x is None:
         return None
     try:
@@ -260,7 +261,6 @@ def to_number(x):
 
 
 def metric_value(val, fmt="{:.2f}", fallback="—"):
-    """Format a numeric value for display with fallback."""
     num = to_number(val)
     if num is None or (isinstance(num, float) and (np.isnan(num) or np.isinf(num))):
         return fallback
@@ -268,7 +268,6 @@ def metric_value(val, fmt="{:.2f}", fallback="—"):
 
 
 def human_duration(sec):
-    """Display seconds as human readable duration (Xd Xh Xm Xs)."""
     if sec is None:
         return "—"
     try:
@@ -290,30 +289,28 @@ def human_duration(sec):
 
 
 def compute_derived_df(df_raw):
-    """Compute extra columns needed for plotting and analysis."""
     df = df_raw.copy()
     df = df.sort_values("time").reset_index(drop=True)
     df["time"] = pd.to_datetime(df["time"])
     df["elapsed_time_s"] = (df["time"] - df["time"].iloc[0]).dt.total_seconds()
     df["time_diff_s"] = df["time"].diff().dt.total_seconds().fillna(0)
-    df["delta_dist"] = df["distance_m"].diff().fillna(0)
-    df["speed_m_s"] = np.where(
-        df["time_diff_s"] > 0,
-        df["delta_dist"] / df["time_diff_s"],
-        np.nan,
-    )
-    df["speed_kmh"] = df["speed_m_s"] * 3.6
-    df["pace_min_per_km"] = np.where(
-        df["speed_m_s"] > 0,
-        (1 / df["speed_m_s"]) / 60 * 1000,
-        np.nan,
-    )
-    df["elevation_diff"] = df["altitude_m"].diff().fillna(0)
+    df["delta_dist"] = df["distance_m"].diff().fillna(0) if "distance_m" in df else 0
+    if "speed_m_s" not in df:
+        df["speed_m_s"] = np.where(
+            df["time_diff_s"] > 0, df["delta_dist"] / df["time_diff_s"], np.nan
+        )
+    if "speed_kmh" not in df:
+        df["speed_kmh"] = df["speed_m_s"] * 3.6
+    if "pace_min_per_km" not in df:
+        df["pace_min_per_km"] = np.where(
+            df["speed_m_s"] > 0, (1 / df["speed_m_s"]) / 60 * 1000, np.nan
+        )
+    if "altitude_m" not in df:
+        df["altitude_m"] = np.nan
     return df
 
 
 def rolling_std(arr, window_pts):
-    """Rolling std for an array using pandas."""
     return pd.Series(arr).rolling(window=window_pts, min_periods=1).std().to_numpy()
 
 
@@ -325,10 +322,6 @@ def detect_stable_segments(
     std_threshold=5,
     min_duration_s=60,
 ):
-    """
-    Identify stable segments in the time series based on power and std.
-    Returns a list of dicts for each stable segment.
-    """
     mask = (
         (~df[power_col].isna())
         & (df[power_col] >= min_power)
@@ -379,7 +372,6 @@ def detect_stable_segments(
 
 
 def regression_with_ci(x, y, n_boot=200, ci=0.95):
-    """Linear regression with confidence intervals (bootstrap)."""
     x = np.array(x, dtype=float)
     y = np.array(y, dtype=float)
     mask = (~np.isnan(x)) & (~np.isnan(y))
@@ -422,7 +414,8 @@ def regression_with_ci(x, y, n_boot=200, ci=0.95):
     return {
         "slope": coeffs[0],
         "intercept": coeffs[1],
-        "r2": 1 - np.sum((ys - y_pred) ** 2) / np.sum((ys - np.mean(ys)) ** 2)
+        "r2": 1
+        - np.sum((ys - y_pred) ** 2) / np.sum((ys - np.mean(ys)) ** 2)
         if np.sum((ys - np.mean(ys)) ** 2) != 0
         else np.nan,
         "x": xs,
@@ -433,57 +426,76 @@ def regression_with_ci(x, y, n_boot=200, ci=0.95):
     }
 
 
-# ---------- Streamlit cache for database ----------
-@st.cache_data(ttl=300)
-def load_sessions():
+# -------------------- Cached DB access (optimized) --------------------
+@st.cache_data(ttl=3600)  # CHANGED: longer cache
+def load_sessions(max_rows=30):
+    """Return only the latest sessions (id, start_time)."""
     db = SessionLocal()
     try:
-        return (
-            db.execute(select(Session).order_by(Session.start_time.desc()))
-            .scalars()
+        # select only columns we need
+        rows = (
+            db.execute(select(Session.id, Session.start_time).order_by(Session.start_time.desc()).limit(max_rows))
             .all()
         )
+        # rebuild lightweight objects (id/start_time) so rest of code still works
+        class _S:  # tiny struct
+            __slots__ = ("id", "start_time")
+            def __init__(self, id, start_time):
+                self.id = id
+                self.start_time = start_time
+        return [_S(r[0], r[1]) for r in rows]
     finally:
         db.close()
 
 
-@st.cache_data(ttl=300)
-def load_trackpoints(session_id):
+@st.cache_data(ttl=3600)  # CHANGED: longer cache
+def load_trackpoints_downsampled(session_id, bucket_seconds=5):
+    """
+    Downsample côté SQL via un bucket par secondes.
+    Compatible Postgres: bucket = floor(epoch/time)/bucket * bucket, puis to_timestamp.
+    On limite les colonnes à l'essentiel et on agrège.
+    """
     db = SessionLocal()
     try:
-        return (
-            db.execute(
-                select(Trackpoint)
-                .where(Trackpoint.session_id == session_id)
-                .order_by(Trackpoint.time)
-            )
-            .scalars()
-            .all()
+        q = text(
+            """
+            SELECT
+              to_timestamp(floor(extract(epoch from time)/:bucket)*:bucket) AT TIME ZONE 'UTC' AS time,
+              AVG(power) AS power,
+              AVG(power_filtered) AS power_filtered,
+              AVG(cadence) AS cadence,
+              AVG(speed_calc_kmh) AS speed_kmh,
+              MAX(distance_m) AS distance_m,
+              AVG(altitude_m) AS altitude_m
+            FROM trackpoints
+            WHERE session_id = :sid
+            GROUP BY 1
+            ORDER BY 1
+            """
         )
+        rows = db.execute(q, {"sid": session_id, "bucket": int(bucket_seconds)}).all()
+        df = pd.DataFrame(
+            rows,
+            columns=[
+                "time",
+                "power",
+                "power_filtered",
+                "cadence",
+                "speed_kmh",
+                "distance_m",
+                "altitude_m",
+            ],
+        )
+        # Ensure numeric types
+        for c in ["power", "power_filtered", "cadence", "speed_kmh", "distance_m", "altitude_m"]:
+            if c in df:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+        return df
     finally:
         db.close()
 
 
-def build_df_from_trackpoints(tps):
-    """Turn a list of ORM trackpoints into a DataFrame."""
-    return pd.DataFrame(
-        [
-            {
-                "time": tp.time,
-                "power": to_number(tp.power),
-                "power_filtered": to_number(tp.power_filtered),
-                "cadence": to_number(tp.cadence),
-                "speed_kmh": to_number(tp.speed_calc_kmh),
-                "pace_min_per_km": to_number(tp.pace_min_per_km),
-                "altitude_m": to_number(tp.altitude_m),
-                "distance_m": to_number(tp.distance_m),
-            }
-            for tp in tps
-        ]
-    )
-
-
-# --------- Preset state (in-memory for now) ----------
+# -------------------- Presets (in-memory) --------------------
 if "presets" not in st.session_state:
     st.session_state.presets = {}
 
@@ -497,16 +509,15 @@ def load_preset(name):
 
 
 def sanitize_text(s: str) -> str:
-    """Sanitize unicode for PDF export (e.g., dash, quotes)."""
     if not isinstance(s, str):
         return s
     replacements = {
-        "\u2014": "-",  # em dash
-        "\u2013": "-",  # en dash
-        "\u2018": "'",  # left single quote
-        "\u2019": "'",  # right single quote
-        "\u201c": '"',  # left double quote
-        "\u201d": '"',  # right double quote
+        "\u2014": "-",
+        "\u2013": "-",
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
         "…": "...",
     }
     for k, v in replacements.items():
@@ -514,8 +525,8 @@ def sanitize_text(s: str) -> str:
     return s
 
 
+# -------------------- Main App --------------------
 def main():
-    global TRANSLATIONSz
     load_dotenv()
     st.set_page_config(
         page_title="Poseidon Dashboard", layout="wide", initial_sidebar_state="expanded"
@@ -535,7 +546,7 @@ def main():
     st.sidebar.title(f"{TRANSLATIONS['flag']} {TRANSLATIONS['controls']}")
     st.title(f"{TRANSLATIONS['title']}")
 
-    sessions = load_sessions()
+    sessions = load_sessions(max_rows=30)  # CHANGED: limit list
     if not sessions:
         st.warning(TRANSLATIONS["no_sessions"])
         return
@@ -563,6 +574,7 @@ def main():
     else:
         preset = {}
 
+    # Filters
     max_power_threshold = st.sidebar.number_input(
         TRANSLATIONS["power_threshold"],
         value=preset.get("max_power_threshold", 250.0),
@@ -583,6 +595,9 @@ def main():
         TRANSLATIONS["min_segment_duration"],
         value=preset.get("min_segment_duration", 60),
         step=10,
+    )
+    bucket_seconds = st.sidebar.number_input(
+        "Downsample bucket (s)", value=5, min_value=1, step=1
     )
 
     colp1, colp2 = st.sidebar.columns([2, 1])
@@ -611,13 +626,14 @@ def main():
         st.experimental_rerun()
 
     primary_session = session_map[primary_choice]
-    primary_tps = load_trackpoints(primary_session.id)
-    df_primary_raw = build_df_from_trackpoints(primary_tps)
+    # CHANGED: load downsampled trackpoints directly from SQL
+    df_primary_raw = load_trackpoints_downsampled(primary_session.id, bucket_seconds=bucket_seconds)
     if df_primary_raw.empty:
         st.error(TRANSLATIONS["no_trackpoints"])
         return
     df_primary = compute_derived_df(df_primary_raw)
 
+    # Apply power filter (client-side) AFTER downsampling (lighter)
     df_primary["power_filtered"] = np.where(
         (~df_primary["power"].isna()) & (df_primary["power"] <= max_power_threshold),
         df_primary["power"],
@@ -645,44 +661,45 @@ def main():
         df_primary["power_filtered"].to_numpy(), df_primary["speed_kmh"].to_numpy()
     )
 
-    compare_session = None
+    # Optional comparison (lazy)
     df_compare = None
     reg_pc_comp = None
     reg_ps_comp = None
     if compare_choice != "None" and compare_choice != primary_choice:
         compare_session = session_map.get(compare_choice)
         if compare_session:
-            compare_tps = load_trackpoints(compare_session.id)
-            df_compare_raw = build_df_from_trackpoints(compare_tps)
-            df_compare = compute_derived_df(df_compare_raw)
-            df_compare["power_filtered"] = np.where(
-                (~df_compare["power"].isna())
-                & (df_compare["power"] <= max_power_threshold),
-                df_compare["power"],
-                np.nan,
-            )
-            median_dt_c = (
-                df_compare["time"].diff().dt.total_seconds().replace(0, np.nan).median()
-            )
-            window_pts_c = (
-                max(1, int(round(std_window_s / median_dt_c)))
-                if pd.notna(median_dt_c) and median_dt_c > 0
-                else 5
-            )
-            df_compare["power_std"] = rolling_std(
-                df_compare["power_filtered"], window_pts_c
-            )
-            reg_pc_comp = regression_with_ci(
-                df_compare["power_filtered"].to_numpy(),
-                df_compare["cadence"].to_numpy(),
-            )
-            reg_ps_comp = regression_with_ci(
-                df_compare["power_filtered"].to_numpy(),
-                df_compare["speed_kmh"].to_numpy(),
-            )
+            df_compare_raw = load_trackpoints_downsampled(compare_session.id, bucket_seconds=bucket_seconds)
+            if not df_compare_raw.empty:
+                df_compare = compute_derived_df(df_compare_raw)
+                df_compare["power_filtered"] = np.where(
+                    (~df_compare["power"].isna())
+                    & (df_compare["power"] <= max_power_threshold),
+                    df_compare["power"],
+                    np.nan,
+                )
+                median_dt_c = (
+                    df_compare["time"].diff().dt.total_seconds().replace(0, np.nan).median()
+                )
+                window_pts_c = (
+                    max(1, int(round(std_window_s / median_dt_c)))
+                    if pd.notna(median_dt_c) and median_dt_c > 0
+                    else 5
+                )
+                df_compare["power_std"] = rolling_std(
+                    df_compare["power_filtered"], window_pts_c
+                )
+                reg_pc_comp = regression_with_ci(
+                    df_compare["power_filtered"].to_numpy(),
+                    df_compare["cadence"].to_numpy(),
+                )
+                reg_ps_comp = regression_with_ci(
+                    df_compare["power_filtered"].to_numpy(),
+                    df_compare["speed_kmh"].to_numpy(),
+                )
     elif compare_choice == primary_choice and compare_choice != "None":
         st.warning(TRANSLATIONS["self_compare_warning"])
 
+    # Metrics requiring time-indexed ops
     def estimate_ftp(series_power, times):
         if series_power.dropna().empty:
             return None
@@ -713,23 +730,31 @@ def main():
 
     ftp_est = estimate_ftp(df_primary["power_filtered"], df_primary["time"])
     npower = normalized_power(df_primary["power_filtered"], df_primary["time"])
-    tss_val = compute_tss(npower, ftp_est, to_number(primary_session.duration_s))
-
-    avg_speed_kmh = to_number(primary_session.avg_speed_kmh)
-    if avg_speed_kmh is None or np.isnan(avg_speed_kmh):
+    # Try to get avg speed from session if available; otherwise compute
+    avg_speed_kmh = None
+    try:
+        avg_speed_kmh = to_number(primary_session.avg_speed_kmh)  # may not exist on lightweight struct
+    except Exception:
+        pass
+    if avg_speed_kmh is None or (isinstance(avg_speed_kmh, float) and np.isnan(avg_speed_kmh)):
         if not df_primary["speed_kmh"].dropna().empty:
             avg_speed_kmh = df_primary["speed_kmh"].dropna().mean()
+
+    # duration from df (robust if Session.duration_s not selected)
+    duration_s = float(df_primary["elapsed_time_s"].iloc[-1]) if len(df_primary) else None
+    tss_val = compute_tss(npower, ftp_est, duration_s)
 
     # --- UI: summary metrics ---
     st.subheader(f"{TRANSLATIONS['primary_session']}: {primary_session.id}")
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric(TRANSLATIONS["duration"], human_duration(primary_session.duration_s))
+    col1.metric(TRANSLATIONS["duration"], human_duration(duration_s))
     col2.metric(
-        TRANSLATIONS["distance"], metric_value(primary_session.distance_km, "{:.2f}")
+        TRANSLATIONS["distance"],
+        metric_value((df_primary["distance_m"].max() or 0) / 1000.0, "{:.2f}"),
     )
     col3.metric(
         TRANSLATIONS["elevation_gain"],
-        metric_value(primary_session.elevation_gain_m, "{:.1f}"),
+        metric_value(df_primary["altitude_m"].diff().clip(lower=0).sum(), "{:.1f}"),
     )
     col4.metric(TRANSLATIONS["avg_speed"], metric_value(avg_speed_kmh, "{:.2f}"))
 
@@ -761,7 +786,7 @@ def main():
         )
     )
 
-    # -------------- TABS Streamlit --------------
+    # -------------- TABS --------------
     tab1, tab2, tab3 = st.tabs(
         [
             TRANSLATIONS["title"],
@@ -770,7 +795,7 @@ def main():
         ]
     )
 
-    # ----------- Classic tab: time series and stats -----------
+    # ----------- Tab 1: time series and stats -----------
     with tab1:
         st.markdown(f"## {TRANSLATIONS['time_series']}")
         max_elapsed = max(
@@ -779,13 +804,6 @@ def main():
         )
         tick_every = 300 if max_elapsed > 3600 else 60
         tickvals = np.arange(0, max_elapsed + tick_every, tick_every)
-
-        def format_seconds_to_hhmmss(seconds):
-            h = int(seconds // 3600)
-            m = int((seconds % 3600) // 60)
-            s = int(seconds % 60)
-            return f"{h:02}:{m:02}:{s:02}"
-
         ticktext = [format_seconds_to_hhmmss(v) for v in tickvals]
 
         fig_power = go.Figure()
@@ -796,7 +814,7 @@ def main():
                 name="Power raw",
                 mode="lines",
                 line=dict(color="lightgray"),
-                opacity=0.6,
+                opacity=0.5,
             )
         )
         fig_power.add_trace(
@@ -833,10 +851,7 @@ def main():
             xaxis_title="Elapsed Time (hh:mm:ss)",
             yaxis_title="Power (W)",
         )
-        fig_power.update_xaxes(
-            tickvals=tickvals,
-            ticktext=ticktext,
-        )
+        fig_power.update_xaxes(tickvals=tickvals, ticktext=ticktext)
         st.plotly_chart(fig_power, use_container_width=True)
 
         if stable_segments:
@@ -1059,7 +1074,7 @@ def main():
             mime="text/csv",
         )
 
-        # Export ALL (advanced)
+        # Full export (warn: heavy)
         st.download_button(
             TRANSLATIONS.get("full_export_csv", "Export all session data (CSV)"),
             data=df_primary.to_csv(index=False).encode("utf-8"),
@@ -1067,7 +1082,6 @@ def main():
             mime="text/csv",
         )
 
-        # PDF export
         if st.button(TRANSLATIONS["download_pdf"]):
             pdf_bytes = make_pdf(
                 primary_session,
@@ -1075,7 +1089,7 @@ def main():
                 stable_segments,
                 reg_pc,
                 reg_ps,
-                compare_session,
+                None if df_compare is None else compare_session,
                 df_compare,
                 reg_pc_comp,
                 reg_ps_comp,
@@ -1092,7 +1106,6 @@ def main():
                 mime="application/pdf",
             )
 
-        # Full PDF export (advanced)
         if st.button(TRANSLATIONS.get("full_export_pdf", "Export full PDF summary")):
             pdf_bytes = make_pdf(
                 primary_session,
@@ -1100,7 +1113,7 @@ def main():
                 stable_segments,
                 reg_pc,
                 reg_ps,
-                compare_session,
+                None if df_compare is None else compare_session,
                 df_compare,
                 reg_pc_comp,
                 reg_ps_comp,
@@ -1118,62 +1131,64 @@ def main():
                 mime="application/pdf",
             )
 
-    # ---------- Progression tab ----------
+    # ---------- Tab 2: Progression (on demand) ----------
     with tab2:
         st.markdown(f"## {TRANSLATIONS['weekly_trends']}")
-        all_records = []
-        for s in sessions:
-            tps = load_trackpoints(s.id)
-            if not tps:
-                continue
-            df = build_df_from_trackpoints(tps)
-            df = compute_derived_df(df)
-            df["power_filtered"] = np.where(
-                (~df["power"].isna()) & (df["power"] <= max_power_threshold),
-                df["power"],
-                np.nan,
-            )
-            ftp_s = estimate_ftp(df["power_filtered"], df["time"])
-            np_s = normalized_power(df["power_filtered"], df["time"])
-            tss_s = compute_tss(np_s, ftp_s, to_number(s.duration_s))
-            week = pd.to_datetime(s.start_time).to_period("W").start_time
-            all_records.append(
-                {
-                    "session_id": s.id,
-                    "week": week,
-                    "ftp": ftp_s,
-                    "np": np_s,
-                    "tss": tss_s,
-                    "date": s.start_time,
-                }
-            )
-        if not all_records:
-            st.info("No data for progression.")
-        else:
-            trend_df = pd.DataFrame(all_records)
-            weekly = (
-                trend_df.groupby("week")
-                .agg({"ftp": "mean", "np": "mean", "tss": "sum"})
-                .reset_index()
-            )
-            fig_ftp = px.line(
-                weekly, x="week", y="ftp", title=TRANSLATIONS["ftp_trend"], markers=True
-            )
-            fig_np = px.line(
-                weekly, x="week", y="np", title=TRANSLATIONS["np_trend"], markers=True
-            )
-            fig_tss = px.bar(
-                weekly, x="week", y="tss", title=TRANSLATIONS["training_load"]
-            )
-            st.plotly_chart(fig_ftp, use_container_width=True)
-            st.plotly_chart(fig_np, use_container_width=True)
-            st.plotly_chart(fig_tss, use_container_width=True)
+        st.info("Calcul déclenché manuellement pour éviter les charges DB inutiles.")
+        if st.button("Calculer tendances (peut être long)"):
+            all_records = []
+            for s in sessions:
+                df = load_trackpoints_downsampled(s.id, bucket_seconds=bucket_seconds)
+                if df.empty:
+                    continue
+                df = compute_derived_df(df)
+                df["power_filtered"] = np.where(
+                    (~df["power"].isna()) & (df["power"] <= max_power_threshold),
+                    df["power"],
+                    np.nan,
+                )
+                ftp_s = estimate_ftp(df["power_filtered"], df["time"])
+                np_s = normalized_power(df["power_filtered"], df["time"])
+                duration_s_sess = float(df["elapsed_time_s"].iloc[-1]) if len(df) else None
+                tss_s = compute_tss(np_s, ftp_s, duration_s_sess)
+                week = pd.to_datetime(s.start_time).to_period("W").start_time
+                all_records.append(
+                    {
+                        "session_id": s.id,
+                        "week": week,
+                        "ftp": ftp_s,
+                        "np": np_s,
+                        "tss": tss_s,
+                        "date": s.start_time,
+                    }
+                )
+            if not all_records:
+                st.info("No data for progression.")
+            else:
+                trend_df = pd.DataFrame(all_records)
+                weekly = (
+                    trend_df.groupby("week")
+                    .agg({"ftp": "mean", "np": "mean", "tss": "sum"})
+                    .reset_index()
+                )
+                fig_ftp = px.line(
+                    weekly, x="week", y="ftp", title=TRANSLATIONS["ftp_trend"], markers=True
+                )
+                fig_np = px.line(
+                    weekly, x="week", y="np", title=TRANSLATIONS["np_trend"], markers=True
+                )
+                fig_tss = px.bar(
+                    weekly, x="week", y="tss", title=TRANSLATIONS["training_load"]
+                )
+                st.plotly_chart(fig_ftp, use_container_width=True)
+                st.plotly_chart(fig_np, use_container_width=True)
+                st.plotly_chart(fig_tss, use_container_width=True)
 
-    # ---------- Advanced tab: power zones, CV, stable segments comparatif, etc. ----------
+    # ---------- Tab 3: Advanced ----------
     with tab3:
         st.header(TRANSLATIONS["advanced"])
 
-        # ---------- 1. Statistiques descriptives -------------
+        # 1) Descriptive statistics
         st.subheader(TRANSLATIONS["Descriptive Statistics"])
         cols_stats = ["power_filtered", "cadence", "speed_kmh"]
         labels_stats = {
@@ -1193,7 +1208,7 @@ def main():
         )
         st.dataframe(stats_table.style.format("{:.2f}"))
 
-        # ---------- 2. Dispersion (boxplots) -------------------
+        # 2) Boxplots
         st.subheader(TRANSLATIONS["Dispersion (Boxplots)"])
         box_col1, box_col2, box_col3 = st.columns(3)
         with box_col1:
@@ -1227,52 +1242,16 @@ def main():
                 use_container_width=True,
             )
 
-        # ---------- 3. Power zones (TABLEAU DETALILLE) ---------
+        # 3) Power zones (détaillé)
         st.subheader("Power zones")
-
         power_zone_defs = [
-            {
-                "zone": "Z1",
-                "name": {"en": "Active Recovery", "fr": "Récup. active"},
-                "from": 0,
-                "to": 34,
-            },
-            {
-                "zone": "Z2",
-                "name": {"en": "Endurance", "fr": "Endurance"},
-                "from": 34,
-                "to": 47,
-            },
-            {
-                "zone": "Z3",
-                "name": {"en": "Tempo", "fr": "Tempo"},
-                "from": 47,
-                "to": 56,
-            },
-            {
-                "zone": "Z4",
-                "name": {"en": "Threshold", "fr": "Seuil"},
-                "from": 56,
-                "to": 66,
-            },
-            {
-                "zone": "Z5",
-                "name": {"en": "VO2max", "fr": "VO2max"},
-                "from": 66,
-                "to": 75,
-            },
-            {
-                "zone": "Z6",
-                "name": {"en": "Anaerobic", "fr": "Anaérobie"},
-                "from": 75,
-                "to": 94,
-            },
-            {
-                "zone": "Z7",
-                "name": {"en": "Neuromuscular", "fr": "Neuromusculaire"},
-                "from": 94,
-                "to": 250,
-            },
+            {"zone": "Z1", "name": {"en": "Active Recovery", "fr": "Récup. active"}, "from": 0, "to": 34},
+            {"zone": "Z2", "name": {"en": "Endurance", "fr": "Endurance"}, "from": 34, "to": 47},
+            {"zone": "Z3", "name": {"en": "Tempo", "fr": "Tempo"}, "from": 47, "to": 56},
+            {"zone": "Z4", "name": {"en": "Threshold", "fr": "Seuil"}, "from": 56, "to": 66},
+            {"zone": "Z5", "name": {"en": "VO2max", "fr": "VO2max"}, "from": 66, "to": 75},
+            {"zone": "Z6", "name": {"en": "Anaerobic", "fr": "Anaérobie"}, "from": 75, "to": 94},
+            {"zone": "Z7", "name": {"en": "Neuromuscular", "fr": "Neuromusculaire"}, "from": 94, "to": 250},
         ]
         bins = [z["from"] for z in power_zone_defs] + [power_zone_defs[-1]["to"]]
         labels = [z["zone"] for z in power_zone_defs]
@@ -1280,7 +1259,13 @@ def main():
             df_primary["power_filtered"], bins=bins, labels=labels, right=False
         )
 
-        dt_median = np.median(np.diff(df_primary["elapsed_time_s"].dropna()))
+        if df_primary["elapsed_time_s"].dropna().empty:
+            dt_median = 1.0
+        else:
+            dt_median = np.median(np.diff(df_primary["elapsed_time_s"].dropna()))
+            if not np.isfinite(dt_median) or dt_median <= 0:
+                dt_median = 1.0
+
         zone_summary = []
         for z in power_zone_defs:
             count = (df_primary["custom_power_zone"] == z["zone"]).sum()
@@ -1300,7 +1285,7 @@ def main():
         df_zone_table = pd.DataFrame(zone_summary)
         st.dataframe(df_zone_table)
 
-        # ---------- 4. Meilleurs efforts rolling 5s, 1min, 5min, 20min ----------
+        # 4) Best average power (5s, 1min, 5min, 20min)
         st.subheader(
             {
                 "en": "Best average power (5s, 1min, 5min, 20min)",
@@ -1309,6 +1294,8 @@ def main():
         )
 
         def best_effort(series, elapsed_s, win_sec):
+            if len(elapsed_s) < 2:
+                return np.nan
             dt = np.median(np.diff(elapsed_s))
             win_pts = max(1, int(round(win_sec / dt))) if dt > 0 else 1
             return pd.Series(series).rolling(win_pts, min_periods=1).mean().max()
@@ -1320,14 +1307,10 @@ def main():
             df_primary["power_filtered"].values, df_primary["elapsed_time_s"].values, 60
         )
         best5m = best_effort(
-            df_primary["power_filtered"].values,
-            df_primary["elapsed_time_s"].values,
-            300,
+            df_primary["power_filtered"].values, df_primary["elapsed_time_s"].values, 300
         )
         best20m = best_effort(
-            df_primary["power_filtered"].values,
-            df_primary["elapsed_time_s"].values,
-            1200,
+            df_primary["power_filtered"].values, df_primary["elapsed_time_s"].values, 1200
         )
         st.markdown(
             f"5s: {best5s:.0f}W, 1min: {best1m:.0f}W, 5min: {best5m:.0f}W, 20min: {best20m:.0f}W"
@@ -1338,7 +1321,6 @@ def main():
                 "Best Power (W)": [best5s, best1m, best5m, best20m],
             }
         )
-
         st.plotly_chart(
             px.bar(
                 best_avg_df,
@@ -1351,22 +1333,7 @@ def main():
             use_container_width=True,
         )
 
-        # ---------- 5. Variabilité cadence -----------------
-        st.subheader(
-            {"en": "Cadence variability", "fr": "Variabilité cadence"}[
-                st.session_state.lang
-            ]
-        )
-        mean_cad = df_primary["cadence"].mean()
-        std_cad = df_primary["cadence"].std()
-        st.write(
-            {
-                "en": f"Mean: {mean_cad:.1f} rpm, Std: {std_cad:.1f} rpm",
-                "fr": f"Moyenne: {mean_cad:.1f} rpm, Écart-type: {std_cad:.1f} rpm",
-            }[st.session_state.lang]
-        )
-
-        # ---------- 6. Longest streak above power threshold ----------
+        # 5) Longest streak between 100–250W
         st.subheader(
             {
                 "en": "Longest streak between 100W and 250W",
@@ -1386,13 +1353,7 @@ def main():
                 max_len = max(max_len, current_len)
             else:
                 current_len = 0
-        streak_s = max_len * np.median(np.diff(df_primary["elapsed_time_s"].values))
-
-        def format_seconds_to_hhmmss(seconds):
-            h = int(seconds // 3600)
-            m = int((seconds % 3600) // 60)
-            s = int(seconds % 60)
-            return f"{h:02}:{m:02}:{s:02}"
+        streak_s = max_len * (dt_median if np.isfinite(dt_median) and dt_median > 0 else 1.0)
 
         st.write(
             {
@@ -1420,87 +1381,32 @@ def make_pdf(
     advanced=False,
 ):
     import io
-
-    import numpy as np
     import plotly.io as pio
     from fpdf import FPDF
 
-    def sanitize_text(s: str) -> str:
+    def _sanitize(s: str) -> str:
         if not isinstance(s, str):
             return s
-        replacements = {
-            "\u2014": "-",
-            "\u2013": "-",
-            "\u2018": "'",
-            "\u2019": "'",
-            "\u201c": '"',
-            "\u201d": '"',
-            "…": "...",
-        }
-        for k, v in replacements.items():
-            s = s.replace(k, v)
-        return s
+        return s.replace("…", "...").replace("\u2013", "-").replace("\u2014", "-")
 
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=10)
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, sanitize_text(TRANSLATIONS["title"]), ln=True)
+    pdf.cell(0, 10, _sanitize(TRANSLATIONS["title"]), ln=True)
     pdf.set_font("Arial", size=10)
-    pdf.cell(
-        0,
-        8,
-        sanitize_text(f"{TRANSLATIONS['primary_session']}: {primary_session.id}"),
-        ln=True,
-    )
+    pdf.cell(0, 8, _sanitize(f"{TRANSLATIONS['primary_session']}: {primary_session.id}"), ln=True)
     pdf.ln(2)
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 6, "Key Metrics", ln=True)
     pdf.set_font("Arial", size=10)
-    pdf.cell(
-        0,
-        5,
-        sanitize_text(
-            f"{TRANSLATIONS['duration']}: {human_duration(primary_session.duration_s)}"
-        ),
-        ln=True,
-    )
-    pdf.cell(
-        0,
-        5,
-        sanitize_text(
-            f"{TRANSLATIONS['distance']}: {metric_value(primary_session.distance_km, '{:.2f}')} km"
-        ),
-        ln=True,
-    )
-    pdf.cell(
-        0,
-        5,
-        sanitize_text(
-            f"{TRANSLATIONS['avg_speed']}: {metric_value(avg_speed_kmh, '{:.2f}')} km/h"
-        ),
-        ln=True,
-    )
-    pdf.cell(
-        0,
-        5,
-        sanitize_text(f"{TRANSLATIONS['ftp_est']}: {metric_value(ftp_est, '{:.1f}')}"),
-        ln=True,
-    )
-    pdf.cell(
-        0,
-        5,
-        sanitize_text(
-            f"{TRANSLATIONS['normalized_power']}: {metric_value(npower, '{:.1f}')}"
-        ),
-        ln=True,
-    )
-    pdf.cell(
-        0,
-        5,
-        sanitize_text(f"{TRANSLATIONS['tss']}: {metric_value(tss_val, '{:.1f}')}"),
-        ln=True,
-    )
+    duration_s = float(df_primary["elapsed_time_s"].iloc[-1]) if len(df_primary) else None
+    pdf.cell(0, 5, _sanitize(f"{TRANSLATIONS['duration']}: {human_duration(duration_s)}"), ln=True)
+    pdf.cell(0, 5, _sanitize(f"{TRANSLATIONS['distance']}: {metric_value((df_primary['distance_m'].max() or 0)/1000.0, '{:.2f}')} km"), ln=True)
+    pdf.cell(0, 5, _sanitize(f"{TRANSLATIONS['avg_speed']}: {metric_value(avg_speed_kmh, '{:.2f}')} km/h"), ln=True)
+    pdf.cell(0, 5, _sanitize(f"{TRANSLATIONS['ftp_est']}: {metric_value(ftp_est, '{:.1f}')}"), ln=True)
+    pdf.cell(0, 5, _sanitize(f"{TRANSLATIONS['normalized_power']}: {metric_value(npower, '{:.1f}')}"), ln=True)
+    pdf.cell(0, 5, _sanitize(f"{TRANSLATIONS['tss']}: {metric_value(tss_val, '{:.1f}')}"), ln=True)
     pdf.ln(5)
     try:
         fig_power = go.Figure()
@@ -1522,13 +1428,6 @@ def make_pdf(
             )
         max_elapsed = df_primary["elapsed_time_s"].max()
         tick_every = 300 if max_elapsed > 3600 else 60
-
-        def format_seconds_to_hhmmss(seconds):
-            h = int(seconds // 3600)
-            m = int((seconds % 3600) // 60)
-            s = int(seconds % 60)
-            return f"{h:02}:{m:02}:{s:02}"
-
         tickvals = np.arange(0, max_elapsed + tick_every, tick_every)
         ticktext = [format_seconds_to_hhmmss(v) for v in tickvals]
         fig_power.update_layout(
@@ -1536,40 +1435,32 @@ def make_pdf(
             xaxis_title="Elapsed Time (hh:mm:ss)",
             yaxis_title="Power (W)",
         )
-        fig_power.update_xaxes(
-            tickvals=tickvals,
-            ticktext=ticktext,
-        )
+        fig_power.update_xaxes(tickvals=tickvals, ticktext=ticktext)
         img_power = pio.to_image(fig_power, format="png", width=700, height=300)
         pdf.image(io.BytesIO(img_power), x=10, w=190)
     except Exception as e:
         pdf.set_font("Arial", "B", 12)
-        pdf.cell(
-            0,
-            6,
-            sanitize_text(f"{TRANSLATIONS['power_over_time']} (image unavailable)"),
-            ln=True,
-        )
+        pdf.cell(0, 6, _sanitize(f"{TRANSLATIONS['power_over_time']} (image unavailable)"), ln=True)
         pdf.set_font("Arial", size=9)
-        pdf.multi_cell(0, 5, sanitize_text(f"Could not render chart: {str(e)}"))
+        pdf.multi_cell(0, 5, _sanitize(f"Could not render chart: {str(e)}"))
 
     pdf.ln(5)
     if stable_segments:
         pdf.set_font("Arial", "B", 12)
-        pdf.cell(0, 6, sanitize_text(TRANSLATIONS["stable_segments"]), ln=True)
+        pdf.cell(0, 6, _sanitize(TRANSLATIONS["stable_segments"]), ln=True)
         pdf.set_font("Arial", size=9)
         for s in stable_segments[:5]:
             line = f"- {human_duration(s['duration_s'])} @ {s['avg_power']:.1f}W (std {s['std_power']:.1f})"
-            pdf.cell(0, 5, sanitize_text(line), ln=True)
+            pdf.cell(0, 5, _sanitize(line), ln=True)
 
     if advanced:
         pdf.add_page()
         pdf.set_font("Arial", "B", 14)
         pdf.cell(0, 10, "Full Session Data (first 40 rows)", ln=True)
         pdf.set_font("Arial", size=8)
-        for idx, row in df_primary.head(40).iterrows():
+        for _, row in df_primary.head(40).iterrows():
             vals = ", ".join(str(row[c]) for c in df_primary.columns)
-            pdf.cell(0, 5, vals[:180], ln=True)
+            pdf.cell(0, 5, _sanitize(vals[:180]), ln=True)
 
     return pdf.output(dest="S").encode("latin1", errors="replace")
 
