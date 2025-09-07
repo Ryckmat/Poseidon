@@ -289,25 +289,45 @@ def human_duration(sec):
 
 
 def compute_derived_df(df_raw):
+    """Compute extra columns needed for plotting and analysis (robuste au downsampling)."""
     df = df_raw.copy()
     df = df.sort_values("time").reset_index(drop=True)
     df["time"] = pd.to_datetime(df["time"])
+
+    # Temps écoulé & delta t
     df["elapsed_time_s"] = (df["time"] - df["time"].iloc[0]).dt.total_seconds()
     df["time_diff_s"] = df["time"].diff().dt.total_seconds().fillna(0)
-    df["delta_dist"] = df["distance_m"].diff().fillna(0) if "distance_m" in df else 0
-    if "speed_m_s" not in df:
-        df["speed_m_s"] = np.where(
-            df["time_diff_s"] > 0, df["delta_dist"] / df["time_diff_s"], np.nan
-        )
-    if "speed_kmh" not in df:
-        df["speed_kmh"] = df["speed_m_s"] * 3.6
-    if "pace_min_per_km" not in df:
-        df["pace_min_per_km"] = np.where(
-            df["speed_m_s"] > 0, (1 / df["speed_m_s"]) / 60 * 1000, np.nan
-        )
+
+    # Distance (si absente -> 0), puis delta distance
+    if "distance_m" not in df:
+        df["distance_m"] = np.nan
+    df["delta_dist"] = df["distance_m"].diff().fillna(0)
+
+    # Vitesse calculée depuis la distance (prioritaire)
+    df["speed_m_s_calc"] = np.where(
+        df["time_diff_s"] > 0, df["delta_dist"] / df["time_diff_s"], np.nan
+    )
+    df["speed_kmh_calc"] = df["speed_m_s_calc"] * 3.6
+
+    # Colonne speed_kmh finale :
+    # - si speed_kmh SQL absente ou nulle/NaN => on prend speed_kmh_calc
+    # - sinon on remplit les trous avec speed_kmh_calc
+    if "speed_kmh" not in df or df["speed_kmh"].isna().all() or (pd.notna(df["speed_kmh"]).any() and df["speed_kmh"].fillna(0).eq(0).all()):
+        df["speed_kmh"] = df["speed_kmh_calc"]
+    else:
+        df["speed_kmh"] = df["speed_kmh"].fillna(df["speed_kmh_calc"])
+
+    # Pace basé sur la vitesse recalculée
+    df["pace_min_per_km"] = np.where(
+        df["speed_m_s_calc"] > 0, (1.0 / df["speed_m_s_calc"]) / 60.0 * 1000.0, np.nan
+    )
+
+    # Altitude (si absente)
     if "altitude_m" not in df:
         df["altitude_m"] = np.nan
+
     return df
+
 
 
 def rolling_std(arr, window_pts):
