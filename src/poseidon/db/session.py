@@ -11,12 +11,24 @@ from sqlalchemy.orm import sessionmaker
 from poseidon.config import database_url
 from poseidon.db.models import Base
 
+# Préfixes hérités, redirigés vers le pilote psycopg 3 (défaut de SQLAlchemy
+# pour postgresql://) : postgres:// (Heroku, certains hébergeurs) et
+# postgresql+psycopg2:// (pilote retiré des dépendances).
+_LEGACY_PREFIXES = ("postgres://", "postgresql+psycopg2://")
+
+
+def normalize_url(url: str) -> str:
+    for prefix in _LEGACY_PREFIXES:
+        if url.startswith(prefix):
+            return "postgresql://" + url[len(prefix) :]
+    return url
+
 
 @lru_cache(maxsize=1)
 def get_engine() -> Engine:
     # pool_pre_ping : les hébergeurs (Supabase, Neon...) coupent les
     # connexions inactives, on les teste avant réutilisation.
-    return create_engine(database_url(), pool_pre_ping=True)
+    return create_engine(normalize_url(database_url()), pool_pre_ping=True)
 
 
 @lru_cache(maxsize=1)

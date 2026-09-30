@@ -5,8 +5,10 @@ GitHub Actions), le dashboard et PostgreSQL.
 
 ## Base PostgreSQL
 
-N'importe quel PostgreSQL convient (local, Supabase, Neon...). Une fois
-`DATABASE_URL` défini :
+N'importe quel PostgreSQL convient (local, Supabase, Neon...). La connexion
+passe par le pilote psycopg 3 ; les URL `postgres://` et
+`postgresql+psycopg2://` sont acceptées et converties. Une fois `DATABASE_URL`
+défini :
 
 ```bash
 poseidon init-db
@@ -40,9 +42,11 @@ liste des séances récentes est affichée dans le résumé de l'exécution.
 3. Laisser `POSEIDON_ENABLE_UPLOAD` absent si l'application est publique :
    l'import ouvrirait l'écriture en base à tout visiteur.
 
-La génération d'image du rapport PDF repose sur le moteur d'export Plotly
-fourni par la dépendance `kaleido`. S'il échoue sur l'hébergeur, le PDF est
-produit sans le graphique et l'incident est journalisé.
+Le graphique du rapport PDF est rendu par `kaleido`, qui pilote un navigateur
+Chrome ou Chromium installé sur la machine (emplacements standards, ou chemin
+donné par la variable `BROWSER_PATH`). Sans navigateur, le PDF est produit
+sans le graphique et l'incident est journalisé. Sur un serveur Debian ou
+Ubuntu : `apt install chromium` ; sinon `plotly_get_chrome` télécharge Chrome.
 
 ## Dashboard sur un serveur
 

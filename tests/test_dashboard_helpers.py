@@ -49,6 +49,15 @@ def test_params_from_env_rejects_garbage(monkeypatch):
         AnalysisParams.from_env()
 
 
+def test_database_url_normalization():
+    from poseidon.db.session import normalize_url
+
+    assert normalize_url("postgres://u:p@h/db") == "postgresql://u:p@h/db"
+    assert normalize_url("postgresql+psycopg2://h/db") == "postgresql://h/db"
+    assert normalize_url("postgresql://h/db") == "postgresql://h/db"
+    assert normalize_url("sqlite:///x.db") == "sqlite:///x.db"
+
+
 def test_upload_flag(monkeypatch):
     monkeypatch.delenv("POSEIDON_ENABLE_UPLOAD", raising=False)
     assert not upload_enabled()
