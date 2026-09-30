@@ -138,6 +138,13 @@ def test_cli_full_cycle(database, write_tcx, tmp_path, capsys):
     assert main(["delete", session_id, "--yes"]) == 1
 
 
+def test_cli_analyze_arguments(database):
+    # Base vide : --all n'a rien à faire mais réussit (workflow de maintenance).
+    assert main(["analyze", "--all"]) == 0
+    # Ni id ni --all : erreur d'usage.
+    assert main(["analyze"]) == 2
+
+
 def test_cli_reports_bad_file(database, tmp_path, caplog):
     bad = tmp_path / "bad.tcx"
     bad.write_text("pas du xml")

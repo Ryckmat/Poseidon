@@ -1,0 +1,54 @@
+name: Maintenance base
+
+# Lancement manuel (onglet Actions) : met le schéma à jour et, en option,
+# recalcule l'analyse de toutes les séances. À lancer après une mise à jour
+# qui ajoute des index ou modifie les calculs.
+on:
+  workflow_dispatch:
+    inputs:
+      analyze_all:
+        description: "Recalculer l'analyse de toutes les séances"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maintenance
+  cancel-in-progress: false
+
+jobs:
+  maintenance:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      MAX_POWER: ${{ vars.MAX_POWER }}
+      MIN_STABLE_POWER: ${{ vars.MIN_STABLE_POWER }}
+      STABLE_WINDOW_S: ${{ vars.STABLE_WINDOW_S }}
+      STABLE_STD_THRESHOLD: ${{ vars.STABLE_STD_THRESHOLD }}
+      MIN_STABLE_DURATION_S: ${{ vars.MIN_STABLE_DURATION_S }}
+      FTP_W: ${{ vars.FTP_W }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e .
+
+      - name: Create missing tables and indexes
+        run: poseidon init-db
+
+      - name: Reanalyze all sessions
+        if: inputs.analyze_all
+        run: poseidon analyze --all
+
+      - name: Summary
+        run: |
+          {
+            echo "### Séances récentes"
+            echo '```'
+            poseidon list --limit 20
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

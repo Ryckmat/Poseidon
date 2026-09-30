@@ -60,6 +60,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     if args.all:
         with get_session() as db:
             ids = all_session_ids(db)
+        if not ids:
+            log.info("Aucune séance en base, rien à analyser")
+            return 0
     else:
         ids = args.session_ids
     if not ids:

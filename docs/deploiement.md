@@ -21,6 +21,10 @@ Après une mise à jour qui change les calculs, recalculer l'historique :
 poseidon analyze --all
 ```
 
+Sans accès direct à la base, le workflow `Maintenance base` fait les deux
+depuis GitHub : onglet **Actions > Maintenance base > Run workflow**. La
+liste des séances récentes est affichée dans le résumé de l'exécution.
+
 ## Dashboard sur Streamlit Community Cloud
 
 1. Créer l'application depuis le dépôt, fichier principal
@@ -55,9 +59,10 @@ Placer un reverse proxy avec authentification devant si l'import est activé.
 | ----------------- | ----------------------------------- | --------------------------------- |
 | `CI`              | push sur `main`, pull request       | lint, tests SQLite et PostgreSQL  |
 | `Process new TCX` | push de `.tcx` dans `data/`, manuel | import et analyse des séances     |
+| `Maintenance base`| manuel                              | `init-db` puis, en option, `analyze --all` |
 
-Configuration du dépôt pour `Process new TCX` (**Settings > Secrets and
-variables > Actions**) :
+Configuration du dépôt pour `Process new TCX` et `Maintenance base`
+(**Settings > Secrets and variables > Actions**) :
 
 | Type     | Nom                                              | Obligatoire |
 | -------- | ------------------------------------------------ | ----------- |
