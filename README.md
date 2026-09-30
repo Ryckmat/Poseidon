@@ -1,84 +1,63 @@
-![CI](https://github.com/Ryckmat/Poseidon/actions/workflows/lint.yml/badge.svg)
-
 # Poseidon
 
+[![CI](https://github.com/Ryckmat/Poseidon/actions/workflows/ci.yml/badge.svg)](https://github.com/Ryckmat/Poseidon/actions/workflows/ci.yml)
+
 Analyse de séances de rameur à partir de fichiers TCX : puissance, cadence,
-vitesse, segments d'effort stable, FTP / NP / TSS et tendances hebdomadaires.
+allure au 500 m, distance par coup, fréquence cardiaque, segments d'effort
+stable, FTP / NP / TSS, tendances hebdomadaires et records.
 
 ```
-TCX ──> poseidon-ingest ──> PostgreSQL ──> poseidon-analyze ──> dashboard Streamlit
-         (1 ou N fichiers,     (raw_files,      (dérivés par point,
-          fusion continue)      sessions,        segments stables,
-                                trackpoints)     régressions)
+ fichiers TCX            PostgreSQL                    Streamlit
+ ───────────  ingest ─> raw_files, sessions,  <─ lit ─ dashboard
+ (1 ou N)                trackpoints                   (séance, progression,
+                  analyze ─> segments, régressions,     analyse avancée,
+                             indicateurs de séance      exports CSV / PDF)
 ```
 
-## Structure
+## Fonctionnalités
 
-```
-src/poseidon/
-├── config.py              # variables d'environnement, AnalysisParams
-├── db/                    # modèles SQLAlchemy, connexion
-├── ingest/
-│   ├── tcx.py             # lecture TCX
-│   ├── merge.py           # fusion multi-fichiers + lissage aux jonctions
-│   ├── store.py           # écriture en base
-│   └── cli.py             # poseidon-ingest
-├── processing/
-│   ├── metrics.py         # calculs purs (pandas), partagés job / dashboard
-│   └── analysis.py        # poseidon-analyze
-└── dashboard/             # Streamlit : app, graphiques, PDF, libellés en/fr
-tests/                     # pytest
-```
+- **Import** d'un fichier, de plusieurs fichiers ou d'un dossier : une séance
+  coupée en plusieurs enregistrements est fusionnée en timeline continue, avec
+  lissage des chutes de puissance aux jonctions. Réimport détecté.
+- **Analyse** : filtrage des pics de puissance, segments stables, régressions
+  puissance/cadence et puissance/vitesse, NP, FTP estimée, TSS (FTP de
+  référence optionnelle). Relançable sans doublon.
+- **Dashboard** : indicateurs clés avec écart vs une séance de comparaison,
+  séries temporelles, zoom sur segment, distributions, zones de puissance,
+  meilleurs efforts, progression hebdomadaire, records personnels, export CSV
+  et rapport PDF, interface en français ou en anglais, import de fichiers
+  optionnel.
+- **Automatisation** : un `.tcx` poussé dans `data/` est importé et analysé par
+  GitHub Actions.
 
-## Installation
+## Démarrage rapide
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-cp .env.example .env      # renseigner DATABASE_URL
-poseidon-init-db          # crée les tables
+make install                 # paquet + outils de dev + hooks pre-commit
+make db-up                   # PostgreSQL local (docker compose)
+cp .env.example .env         # DATABASE_URL déjà adapté à la base locale
+poseidon init-db
+poseidon ingest data/seance.tcx --analyze
+make run                     # dashboard sur http://localhost:8501
 ```
 
-## Utilisation
+Commandes principales :
 
-```bash
-# Une séance = un fichier
-poseidon-ingest data/seance.tcx
+| Commande                                   | Rôle                                        |
+| ------------------------------------------ | ------------------------------------------- |
+| `poseidon ingest FICHIER... [--analyze]`   | importe une séance (fichiers ou dossier)    |
+| `poseidon analyze ID... \| --all`          | (re)calcule l'analyse                       |
+| `poseidon list`                            | liste les séances                           |
+| `poseidon delete ID`                       | supprime une séance et ses données          |
 
-# Une séance coupée en plusieurs fichiers : fusion en timeline continue
-poseidon-ingest data/part1.tcx data/part2.tcx --name "2025-03-08 fractionné"
+## Documentation
 
-# Analyse (l'id est affiché en dernière ligne par poseidon-ingest)
-poseidon-analyze <session_id>
-
-# Dashboard
-streamlit run src/poseidon/dashboard/app.py
-```
-
-Options de fusion : `--no-fix-boundary-spikes`, `--spike-window-after-s`,
-`--spike-seek-next-valid-s`, `--spike-min-valid-w` (voir `poseidon-ingest -h`).
-
-## Paramètres d'analyse
-
-Lus depuis l'environnement par `poseidon-analyze`, modifiables en direct dans
-le dashboard.
-
-| Variable                | Défaut | Rôle                                              |
-| ----------------------- | ------ | ------------------------------------------------- |
-| `MAX_POWER`             | 250    | Puissance au-delà de laquelle un point est écarté |
-| `MIN_STABLE_POWER`      | 50     | Puissance min d'un segment stable                 |
-| `STABLE_WINDOW_S`       | 30     | Fenêtre de l'écart-type glissant                  |
-| `STABLE_STD_THRESHOLD`  | 5      | Écart-type max pour être « stable »               |
-| `MIN_STABLE_DURATION_S` | 60     | Durée min d'un segment stable                     |
-
-## CI
-
-- `lint.yml` : black, isort, flake8, pytest.
-- `process-tcx.yml` : à chaque push d'un `.tcx` dans `data/`, ingère puis
-  analyse les fichiers ajoutés. Nécessite le secret `DATABASE_URL`.
-
-## Développement
-
-```bash
-black src tests && isort src tests && flake8 src tests && pytest
-```
+| Page                                        | Contenu                                           |
+| ------------------------------------------- | ------------------------------------------------- |
+| [Utilisation](docs/utilisation.md)          | CLI, dashboard, configuration, dossier `data/`    |
+| [Métriques](docs/metriques.md)              | définition de chaque indicateur et de la fusion   |
+| [Architecture](docs/architecture.md)        | modules, flux, modèle de données                  |
+| [Déploiement](docs/deploiement.md)          | base hébergée, Streamlit Cloud, GitHub Actions    |
+| [Développement](docs/developpement.md)      | environnement, tests, conventions                 |
+| [Changelog](CHANGELOG.md)                   | historique des versions                           |
