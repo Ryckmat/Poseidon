@@ -6,7 +6,7 @@ from poseidon.db.models import (
     StableSegment,
     Trackpoint,
 )
-from poseidon.db.session import get_session, init_db
+from poseidon.db.session import get_engine, get_session, init_db, reset_engine
 
 __all__ = [
     "Base",
@@ -15,6 +15,8 @@ __all__ = [
     "Session",
     "StableSegment",
     "Trackpoint",
+    "get_engine",
     "get_session",
     "init_db",
+    "reset_engine",
 ]

@@ -1,9 +1,12 @@
 name: Process new TCX
 
+# Chaque .tcx poussé dans data/ devient une séance ; un sous-dossier de data/
+# contenant plusieurs .tcx devient une seule séance fusionnée.
 on:
   push:
+    branches: [main]
     paths:
-      - "data/**/*.tcx"
+      - "data/**.tcx"
   workflow_dispatch:
 
 jobs:
@@ -11,34 +14,46 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      MAX_POWER: 250
-      STABLE_WINDOW_S: 30
-      STABLE_STD_THRESHOLD: 5
-      MIN_STABLE_DURATION_S: 60
+      MAX_POWER: ${{ vars.MAX_POWER }}
+      MIN_STABLE_POWER: ${{ vars.MIN_STABLE_POWER }}
+      STABLE_WINDOW_S: ${{ vars.STABLE_WINDOW_S }}
+      STABLE_STD_THRESHOLD: ${{ vars.STABLE_STD_THRESHOLD }}
+      MIN_STABLE_DURATION_S: ${{ vars.MIN_STABLE_DURATION_S }}
+      FTP_W: ${{ vars.FTP_W }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
-          fetch-depth: 2
-      - uses: actions/setup-python@v5
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
       - run: pip install -e .
 
-      - name: Ingest and analyze new TCX files
+      - name: List TCX sources to import
+        id: sources
+        env:
+          BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "push" ]; then
-            files=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD -- 'data/*.tcx' 'data/**/*.tcx')
+          if [ "${{ github.event_name }}" = "push" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            files=$(git diff --name-only --diff-filter=AM "$BEFORE" "$GITHUB_SHA" -- 'data/**.tcx')
           else
             files=$(find data -name '*.tcx' 2>/dev/null || true)
           fi
-          if [ -z "$files" ]; then
-            echo "No TCX file to process."
-            exit 0
-          fi
-          for f in $files; do
-            echo "=== $f ==="
-            session_id=$(poseidon-ingest "$f" | tail -n 1)
-            poseidon-analyze "$session_id"
-          done
+          # Fichier à la racine de data/ -> lui-même ; sinon -> son dossier.
+          printf '%s\n' "$files" | sed '/^$/d' | while read -r f; do
+            dir=$(dirname "$f")
+            if [ "$dir" = "data" ]; then echo "$f"; else echo "$dir"; fi
+          done | sort -u > sources.txt
+          echo "Sources :"; cat sources.txt
+          echo "count=$(wc -l < sources.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Import and analyze
+        if: steps.sources.outputs.count != '0'
+        run: |
+          set -euo pipefail
+          poseidon init-db
+          while read -r source; do
+            poseidon ingest "$source" --analyze --skip-existing
+          done < sources.txt

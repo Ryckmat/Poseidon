@@ -2,17 +2,16 @@
 
 import math
 from dataclasses import replace
-from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from datetime import UTC, datetime
 
 from poseidon.ingest.tcx import TrackPoint, time_bounds
 
-_MIN_TIME = datetime.min.replace(tzinfo=timezone.utc)
+_MIN_TIME = datetime.min.replace(tzinfo=UTC)
 
 
 def merge_continuous(
-    files: List[List[TrackPoint]],
-) -> Tuple[List[TrackPoint], List[datetime]]:
+    files: list[list[TrackPoint]],
+) -> tuple[list[TrackPoint], list[datetime]]:
     """Enchaîne les fichiers sans trou.
 
     Les fichiers sont ordonnés par heure de début, puis décalés pour démarrer
@@ -22,10 +21,10 @@ def merge_continuous(
     bounds = [time_bounds(pts) for pts in files]
     order = sorted(range(len(files)), key=lambda i: bounds[i][0] or _MIN_TIME)
 
-    merged: List[TrackPoint] = []
-    boundaries: List[datetime] = []
+    merged: list[TrackPoint] = []
+    boundaries: list[datetime] = []
     seen_times = set()
-    cursor: Optional[datetime] = None
+    cursor: datetime | None = None
     distance_offset = 0.0
 
     for idx in order:
@@ -61,8 +60,8 @@ def merge_continuous(
 
 
 def smooth_boundary_power(
-    points: List[TrackPoint],
-    boundaries: List[datetime],
+    points: list[TrackPoint],
+    boundaries: list[datetime],
     window_after_s: float = 3.0,
     seek_next_valid_s: float = 6.0,
     min_valid_w: float = 20.0,
@@ -75,27 +74,28 @@ def smooth_boundary_power(
     de point valide après B, la puissance d'avant B est recopiée.
     """
 
-    def valid(power: Optional[float]) -> bool:
+    def valid(power: float | None) -> bool:
         return power is not None and not math.isnan(power)
 
     timed = [p for p in points if p.time is not None]
-    for b in boundaries:
-        before = [p for p in timed if p.time < b]
+    for boundary in boundaries:
+        before = [p for p in timed if p.time < boundary]
         if not before or not valid(before[-1].power):
             continue
         prev = before[-1]
-
-        def offset(p: TrackPoint) -> float:
-            return (p.time - b).total_seconds()
-
-        window = [p for p in timed if 0 <= offset(p) <= window_after_s]
+        after = [
+            (p, (p.time - boundary).total_seconds())
+            for p in timed
+            if p.time >= boundary
+        ]
+        window = [p for p, offset in after if offset <= window_after_s]
         if not window:
             continue
         nxt = next(
             (
                 p
-                for p in timed
-                if 0 <= offset(p) <= seek_next_valid_s
+                for p, offset in after
+                if offset <= seek_next_valid_s
                 and valid(p.power)
                 and p.power >= min_valid_w
             ),

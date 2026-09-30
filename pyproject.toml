@@ -1,42 +1,61 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "poseidon"
-version = "0.2.0"
-description = "Analyse de séances d'entraînement TCX (puissance, cadence, vitesse)"
+version = "0.3.0"
+description = "Analyse de séances de rameur à partir de fichiers TCX"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "pandas==2.1.2",
-  "numpy==1.26.1",
-  "sqlalchemy==2.0.22",
-  "psycopg2-binary==2.9.7",
-  "python-dotenv==1.0.0",
-  "streamlit==1.26.0",
-  "plotly==5.15.0",
-  "fpdf2==2.7.6",
+  "pandas==2.3.3",
+  "numpy==2.3.5",
+  "sqlalchemy==2.0.54",
+  "psycopg2-binary==2.9.13",
+  "python-dotenv==1.2.3",
+  "defusedxml==0.7.1",
+  "streamlit==1.64.0",
+  "plotly==5.24.1",
   "kaleido==0.2.1",
+  "fpdf2==2.8.9",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest==7.4.3", "black==23.9.1", "isort==5.13.2", "flake8==6.1.0"]
+dev = ["pytest==9.1.1", "pytest-cov==7.1.0", "ruff==0.16.9", "pre-commit==4.6.2"]
 
 [project.scripts]
-poseidon-ingest = "poseidon.ingest.cli:main"
-poseidon-analyze = "poseidon.processing.analysis:main"
-poseidon-init-db = "poseidon.db.session:init_db"
+poseidon = "poseidon.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.black]
+[tool.ruff]
 line-length = 88
-target-version = ["py311"]
+target-version = "py311"
+src = ["src", "tests"]
 
-[tool.isort]
-profile = "black"
-known_first_party = ["poseidon"]
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = [
+  "B008",   # valeur par défaut dataclass figée (BoundaryFix())
+  "RUF001", # caractères ambigus dans les libellés français
+  "RUF002",
+  "RUF003",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["poseidon"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+  "postgres: nécessite une base PostgreSQL (POSEIDON_TEST_DATABASE_URL)",
+]
+filterwarnings = [
+  "ignore::DeprecationWarning:kaleido.*",
+]
+
+[tool.coverage.run]
+source = ["poseidon"]

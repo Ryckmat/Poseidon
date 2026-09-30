@@ -17,7 +17,7 @@
       ]
     }
   },
-  "updateContentCommand": "[ -f packages.txt ] && sudo apt update && sudo apt upgrade -y && sudo xargs apt install -y <packages.txt; pip3 install --user -e '.[dev]'",
+  "updateContentCommand": "[ -f packages.txt ] && sudo apt update && sudo apt upgrade -y && sudo xargs apt install -y <packages.txt; pip3 install --user -e '.[dev]' && pre-commit install",
   "postAttachCommand": {
     "server": "streamlit run src/poseidon/dashboard/app.py --server.enableCORS false --server.enableXsrfProtection false"
   },
