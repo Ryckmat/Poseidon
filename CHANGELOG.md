@@ -10,6 +10,7 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
   en option, `analyze --all`.
 - Dependabot : mises à jour mensuelles des dépendances Python et des actions
   GitHub.
+- Licence MIT.
 
 ### Modifié
 

@@ -61,3 +61,7 @@ Commandes principales :
 | [Déploiement](docs/deploiement.md)          | base hébergée, Streamlit Cloud, GitHub Actions    |
 | [Développement](docs/developpement.md)      | environnement, tests, conventions                 |
 | [Changelog](CHANGELOG.md)                   | historique des versions                           |
+
+## Licence
+
+[MIT](LICENSE)
