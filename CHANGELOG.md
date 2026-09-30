@@ -2,6 +2,18 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [Non publié]
+
+### Ajouté
+
+- Workflow `Maintenance base`, lancé à la main depuis GitHub : `init-db` puis,
+  en option, `analyze --all`.
+
+### Corrigé
+
+- `poseidon analyze --all` sur une base vide réussit au lieu de renvoyer une
+  erreur.
+
 ## [0.3.0] - 2026-09-30
 
 ### Ajouté
