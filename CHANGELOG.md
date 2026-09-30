@@ -11,6 +11,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 - Dependabot : mises à jour mensuelles des dépendances Python et des actions
   GitHub.
 - Licence MIT.
+- `packages.txt` : Chromium installé sur Streamlit Cloud et dans le
+  devcontainer pour le graphique du rapport PDF.
 
 ### Modifié
 
