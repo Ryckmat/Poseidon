@@ -12,7 +12,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "Matthieu Ryckman" }]
 requires-python = ">=3.11"
 dependencies = [
-  "pandas==2.3.3",
+  "pandas==3.0.6",
   "numpy==2.3.5",
   "sqlalchemy==2.0.54",
   "psycopg2-binary==2.9.13",
