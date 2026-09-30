@@ -414,7 +414,7 @@ def render_progression_tab(t: Translator) -> None:
         st.info(t("no_progression"))
         return
     pending = int(
-        history[["normalized_power", "tss", "ftp_estimated"]].isna().all(1).sum()
+        history[["normalized_power", "tss", "ftp_estimated"]].isna().all(axis=1).sum()
     )
     if pending:
         st.info(t("not_analyzed", count=pending))

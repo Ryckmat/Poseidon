@@ -16,6 +16,11 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
 - Les hooks pre-commit utilisent le ruff installé par le projet (version
   unique dans `pyproject.toml`).
+- Pilote PostgreSQL psycopg 3 à la place de psycopg2 (SQLAlchemy 2.1) ; les
+  URL `postgres://` et `postgresql+psycopg2://` restent acceptées.
+- plotly 7 et kaleido 1 : l'image du graphique du PDF nécessite désormais
+  Chrome ou Chromium sur la machine.
+- numpy 2.4, SQLAlchemy 2.1.
 
 ### Corrigé
 
