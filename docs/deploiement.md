@@ -39,7 +39,9 @@ liste des séances récentes est affichée dans le résumé de l'exécution.
    FTP_W = "180"
    ```
 
-3. Laisser `POSEIDON_ENABLE_UPLOAD` absent si l'application est publique :
+3. Chromium, nécessaire au graphique du rapport PDF, est installé par
+   `packages.txt` (paquets système lus par Streamlit Cloud).
+4. Laisser `POSEIDON_ENABLE_UPLOAD` absent si l'application est publique :
    l'import ouvrirait l'écriture en base à tout visiteur.
 
 Le graphique du rapport PDF est rendu par `kaleido`, qui pilote un navigateur
