@@ -8,25 +8,15 @@ on:
 
 jobs:
   lint-and-test:
-    name: Lint & Test
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Lint with black/isort/flake8
-        run: |
-          pip install black==23.9.1 isort==5.13.2 flake8==6.1.0
-          black --check src
-          isort --check-only src
-          flake8 src
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: black --check src tests
+      - run: isort --check-only src tests
+      - run: flake8 src tests
+      - run: pytest

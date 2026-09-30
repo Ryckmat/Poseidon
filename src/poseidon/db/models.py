@@ -1,8 +1,7 @@
-# src/db/models.py
-import os
+"""Schéma de la base (SQLAlchemy)."""
+
 import uuid
 
-from dotenv import load_dotenv
 from sqlalchemy import (
     JSON,
     TIMESTAMP,
@@ -12,20 +11,11 @@ from sqlalchemy import (
     Numeric,
     String,
     UniqueConstraint,
-    create_engine,
     func,
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+from sqlalchemy.orm import declarative_base, relationship
 
-load_dotenv()
-
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL not set in environment")
-
-engine = create_engine(DATABASE_URL, echo=False, future=True)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
 
@@ -109,7 +99,3 @@ class Regression(Base):
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
     session = relationship("Session", back_populates="regressions")
-
-
-def init_db():
-    Base.metadata.create_all(bind=engine)
