@@ -12,7 +12,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./scripts/create-test-db.sql:/docker-entrypoint-initdb.d/10-test-db.sql:ro
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "poseidon"]
+      test: ["CMD", "pg_isready", "-U", "poseidon", "-d", "poseidon"]
       interval: 5s
       retries: 10
 

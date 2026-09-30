@@ -13,8 +13,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -33,15 +33,15 @@ jobs:
           POSTGRES_DB: poseidon_test
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U poseidon"
+          --health-cmd "pg_isready -U poseidon -d poseidon_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
       POSEIDON_TEST_DATABASE_URL: postgresql://poseidon:poseidon@localhost:5432/poseidon_test
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
