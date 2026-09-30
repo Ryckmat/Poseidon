@@ -43,7 +43,12 @@ Les fichiers TCX de test sont générés par la fixture `write_tcx`
 - Toute nouvelle formule va dans `processing/metrics.py`, avec un test.
 - Tout nouveau libellé du dashboard va dans `dashboard/i18n.py`, en anglais et
   en français (un test vérifie que chaque clé est traduite).
-- Dépendances figées dans `pyproject.toml`, seule source de vérité.
+- Dépendances figées dans `pyproject.toml`, seule source de vérité (ruff
+  compris : les hooks pre-commit utilisent la version installée).
+- Dependabot (`.github/dependabot.yml`) propose chaque mois une PR groupée
+  pour les versions mineures et correctives des dépendances Python et des
+  actions GitHub, et une PR séparée par version majeure. La CI valide chaque
+  PR ; relire le changelog du paquet avant de merger une version majeure.
 - Messages de commit à l'impératif, décrivant le pourquoi.
 
 ## Publier une version

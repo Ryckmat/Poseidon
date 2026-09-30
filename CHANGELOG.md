@@ -8,6 +8,13 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
 - Workflow `Maintenance base`, lancé à la main depuis GitHub : `init-db` puis,
   en option, `analyze --all`.
+- Dependabot : mises à jour mensuelles des dépendances Python et des actions
+  GitHub.
+
+### Modifié
+
+- Les hooks pre-commit utilisent le ruff installé par le projet (version
+  unique dans `pyproject.toml`).
 
 ### Corrigé
 

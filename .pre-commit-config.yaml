@@ -1,10 +1,18 @@
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.9
+  # ruff installé par le projet (pip install -e ".[dev]") : sa version est
+  # figée dans pyproject.toml et suivie par Dependabot.
+  - repo: local
     hooks:
       - id: ruff-format
+        name: ruff format
+        entry: ruff format
+        language: system
+        types_or: [python, pyi]
       - id: ruff-check
-        args: [--fix]
+        name: ruff check
+        entry: ruff check --fix
+        language: system
+        types_or: [python, pyi]
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
