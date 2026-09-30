@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=69"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,9 @@ name = "poseidon"
 version = "0.3.0"
 description = "Analyse de séances de rameur à partir de fichiers TCX"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Matthieu Ryckman" }]
 requires-python = ">=3.11"
 dependencies = [
   "pandas==2.3.3",
