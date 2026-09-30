@@ -17,7 +17,7 @@ dependencies = [
   "defusedxml==0.7.1",
   "streamlit==1.64.0",
   "plotly==5.24.1",
-  "kaleido==0.2.1",
+  "kaleido==1.4.0",
   "fpdf2==2.8.9",
 ]
 
